@@ -4444,7 +4444,7 @@ export default function KnowledgeComponentDashboard() {
                       {/* KB List + Create Button - collapsible on mobile, always visible on desktop */}
                       <div className={`${isMobileKbOpen ? 'block' : 'hidden'} xl:block`}>
                         <div className="mb-3 mt-2 xl:mt-0">
-                          <div className="max-h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                          <div className="overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                             {user && (
                               <KnowledgeBaseList
                                 userId={user.id}

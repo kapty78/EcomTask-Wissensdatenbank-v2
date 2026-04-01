@@ -345,49 +345,54 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
 
       {/* Inline create row */}
       {isCreating && (
-        <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-2.5 space-y-2">
+        <div className="flex items-center gap-1.5 px-1 py-1">
           <input
             ref={nameInputRef}
             type="text"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             onKeyDown={handleCreateKeyDown}
-            placeholder="Name der Wissensdatenbank..."
-            className="w-full rounded-md border border-[#333] bg-[#252525]/30 px-2.5 py-1.5 text-sm text-white placeholder:text-gray-500 focus:border-pink-500/50 focus:outline-none focus:ring-1 focus:ring-pink-500/50"
+            placeholder="Name..."
+            className="min-w-0 flex-1 rounded-md border border-[#333] bg-transparent px-2 py-1.5 text-[13px] text-white placeholder:text-gray-500 focus:border-white/30 focus:outline-none"
             disabled={createLoading}
             autoFocus
           />
-          <div className="flex items-center gap-2">
-            <select
-              value={newLanguage}
-              onChange={e => setNewLanguage(e.target.value)}
-              className="flex-1 rounded-md border border-[#333] bg-[#252525]/30 px-2 py-1.5 text-xs text-white focus:border-pink-500/50 focus:outline-none"
-              disabled={createLoading}
-            >
-              <option value="de">Deutsch</option>
-              <option value="en">English</option>
-              <option value="fr">Français</option>
-              <option value="es">Español</option>
-              <option value="it">Italiano</option>
-              <option value="nl">Nederlands</option>
-              <option value="pl">Polski</option>
-              <option value="pt">Português</option>
-            </select>
-            <button
-              onClick={handleConfirmCreate}
-              disabled={createLoading || !newName.trim()}
-              className="rounded-md bg-pink-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-pink-600 disabled:opacity-40"
-            >
-              {createLoading ? <Loader2 className="size-3 animate-spin" /> : "Erstellen"}
-            </button>
-            <button
-              onClick={handleCancelCreate}
-              disabled={createLoading}
-              className="rounded-md px-2 py-1.5 text-xs text-gray-400 transition-colors hover:text-white"
-            >
-              <X className="size-3.5" />
-            </button>
-          </div>
+          <select
+            value={newLanguage}
+            onChange={e => setNewLanguage(e.target.value)}
+            className="w-[72px] rounded-md border border-[#333] bg-transparent px-1.5 py-1.5 text-[11px] text-gray-300 focus:border-white/30 focus:outline-none"
+            disabled={createLoading}
+          >
+            <option value="de">DE</option>
+            <option value="en">EN</option>
+            <option value="fr">FR</option>
+            <option value="es">ES</option>
+            <option value="it">IT</option>
+            <option value="nl">NL</option>
+            <option value="pl">PL</option>
+            <option value="pt">PT</option>
+          </select>
+          {createLoading ? (
+            <Loader2 className="size-3.5 animate-spin text-gray-400" />
+          ) : (
+            <>
+              <button
+                onClick={handleConfirmCreate}
+                disabled={!newName.trim()}
+                className="rounded p-1 text-gray-400 transition-colors hover:text-white disabled:opacity-30"
+                title="Erstellen (Enter)"
+              >
+                <Plus className="size-3.5" />
+              </button>
+              <button
+                onClick={handleCancelCreate}
+                className="rounded p-1 text-gray-500 transition-colors hover:text-white"
+                title="Abbrechen (Esc)"
+              >
+                <X className="size-3.5" />
+              </button>
+            </>
+          )}
         </div>
       )}
 
