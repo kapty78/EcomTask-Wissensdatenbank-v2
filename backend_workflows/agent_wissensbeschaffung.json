@@ -1,0 +1,328 @@
+{
+    "nodes": [
+      {
+        "parameters": {
+          "aggregate": "aggregateAllItemData",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.aggregate",
+        "typeVersion": 1,
+        "position": [
+          4704,
+          960
+        ],
+        "id": "472f32c9-9743-4620-8645-f0c75035bf5c",
+        "name": "Aggregate"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-4.1-nano",
+            "mode": "list",
+            "cachedResultName": "GPT-4.1-NANO"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "=Du bist ein Teil eines intelligenten Workflows von celexon, der passende Informationen findet, indem du bis zu 5 kurze fragen an unsere Vectordatenbank stellst. ",
+                "role": "system"
+              },
+              {
+                "content": "=Aufgabe:\nErzeuge aus der Nutzeranfrage genau 5 kurze, präzise und semantisch unterschiedliche Fragen, die für eine Vektor-Suche optimiert sind.\n\nSCHRITT 1: Intent erkennen  \nAnalysiere die Anfrage und ordne sie automatisch einer der folgenden Kategorien zu:\n\n- Wissensfrage (Wer/Was/Welche/Wie viele)\n- Ursache/Warum\n- Prozess/Ablauf\n- Problem/Beschwerde\n- Regel/Bedingung\n- Produkt/Artikel/Bestellung\n- Definition/Bedeutung\n- Technisches Problem\n- Serviceanfrage\n- Sonstiger allgemeiner Intent\n\nSCHRITT 2: Sonderregeln beachten (highest priority) \n{{ $json.data.map(item => item.generated_prompt).join('\\n\\n') }}\n\nSCHRITT 3: Semantisch unterschiedliche Fragen erzeugen  \nErzeuge 5 Fragen, die sich klar voneinander unterscheiden.  \nDie Fragen müssen verschiedene Bedeutungswinkel abdecken, z. B.:\n\n- Reformulierter Intent  \n- Prozess-/Ablaufperspektive (falls relevant)  \n- Problem-/Fehlerperspektive (falls relevant)  \n- Regel-/Bedingungsperspektive (falls relevant)  \n- Verantwortlichkeits-/Rollenperspektive  \n- Kontext-/Hintergrundperspektive  \n- Alternativinterpretation  \n\nDie Fragen sollen jeweils einen anderen Suchraum öffnen.\n\nREGELN:\n- Immer kurz, klar, deutsch.\n- Keine Erfindungen, keine Annahmen.\n- Keine Beispiele.\n- Immer genau 5 Fragen erzeugen.\n- Jede Frage MUSS sich semantisch UND sprachlich voneinander unterscheiden.\n\nOUTPUT (strikt):\n{\n  \"queries\": [\n    \"Frage 1?\",\n    \"Frage 2?\",\n    \"Frage 3?\",\n    \"Frage 4?\",\n    \"Frage 5?\"\n  ]\n}"
+              },
+              {
+                "content": "=Subject: {{ $('Edit Fields1').item.json._subject }}\nBody: {{ $('Edit Fields1').item.json._newbody }}{{ $('Edit Fields1').item.json._subject }}{{ $('Edit Fields1').item.json._newbody }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "jsonOutput": true,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          4896,
+          976
+        ],
+        "id": "4de4767c-a71d-43a1-87fd-b1df5bc9c735",
+        "name": "Message a model",
+        "credentials": {
+          "openAiApi": {
+            "id": "e17bjF80IKZQVSIA",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// 1) Array aus der GPT-Antwort holen (richtiger Key: 'queries')\nconst qs = items[0].json.choices[0].message.content.queries ?? [];\n\n// 2) Für jede Frage ein neues Item erzeugen\nreturn qs.map(q => ({\n  json: { question: q }\n}));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          5280,
+          976
+        ],
+        "id": "fd37dde1-bbbb-4ee2-be06-a33e71ef87b3",
+        "name": "Parsing 3 questions1"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Alle 5 Fragen in einem Array für Batch-Embedding sammeln\nconst questions = $input.all().map(i => i.json.question);\nreturn [{\n  json: {\n    questions,\n    allTexts: questions\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          5456,
+          976
+        ],
+        "id": "aabb1122-cc33-4455-dd66-ee7788990011",
+        "name": "Aggregate Questions"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/embeddings",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.allTexts) }}\n}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          5664,
+          976
+        ],
+        "id": "bbcc2233-dd44-5566-ee77-ff8899001122",
+        "name": "Batch Embeddings (5 Questions)",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "openAiApi": {
+            "id": "e17bjF80IKZQVSIA",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Embeddings den 5 Fragen zuordnen und Such-JSON erzeugen\nconst questions = $('Aggregate Questions').first().json.questions;\nconst embeddings = $json.data.map(d => d.embedding);\n\nreturn questions.map((q, i) => ({\n  json: {\n    question: q,\n    query_embedding: embeddings[i],\n    kb_id: \"600f01cc-53fb-4f09-8ba6-3f52fdd95097\",\n    match_count: 10,\n    similarity_threshold: 0.45\n  }\n}));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          5888,
+          976
+        ],
+        "id": "ccdd3344-ee55-6677-ff88-001122334455",
+        "name": "Split & Create Search JSON"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://gclbyumpxzhmrsuyonne.supabase.co/rest/v1/rpc/match_questions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "supabaseApi",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "json"
+              }
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          6064,
+          880
+        ],
+        "id": "5113c551-31a7-4c47-9ba1-8f23de9fb486",
+        "name": "questions",
+        "credentials": {
+          "supabaseApi": {
+            "id": "UpGqlYeH8UZ1zgx2",
+            "name": "Supabase account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://gclbyumpxzhmrsuyonne.supabase.co/rest/v1/rpc/match_documents",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "supabaseApi",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "json"
+              }
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          6064,
+          1056
+        ],
+        "id": "2781d002-f1a9-4e2f-bb94-6c3da31667b0",
+        "name": "facts",
+        "credentials": {
+          "supabaseApi": {
+            "id": "UpGqlYeH8UZ1zgx2",
+            "name": "Supabase account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          6272,
+          976
+        ],
+        "id": "5f05fea4-f8fe-4453-bc05-a567c63d5b03",
+        "name": "Merge7"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Deduplizierung nach ID, Sortierung nach similarity, Top-20\nconst allItems = $input.all().map(i => i.json);\n\nconst seen = new Map();\nfor (const item of allItems) {\n  const id = item.ki_id ?? item.id ?? item.content;\n  if (!seen.has(id) || (item.similarity ?? 0) > (seen.get(id).similarity ?? 0)) {\n    seen.set(id, item);\n  }\n}\n\nconst deduped = [...seen.values()]\n  .sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))\n  .slice(0, 20);\n\nreturn deduped.map(item => ({ json: item }));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          6448,
+          976
+        ],
+        "id": "33c84cc1-9a48-4020-bad7-bda0deadb968",
+        "name": "Deduplicate & Rank"
+      }
+    ],
+    "connections": {
+      "Aggregate": {
+        "main": [
+          [
+            {
+              "node": "Message a model",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Message a model": {
+        "main": [
+          [
+            {
+              "node": "Parsing 3 questions1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parsing 3 questions1": {
+        "main": [
+          [
+            {
+              "node": "Aggregate Questions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate Questions": {
+        "main": [
+          [
+            {
+              "node": "Batch Embeddings (5 Questions)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Batch Embeddings (5 Questions)": {
+        "main": [
+          [
+            {
+              "node": "Split & Create Search JSON",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split & Create Search JSON": {
+        "main": [
+          [
+            {
+              "node": "questions",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "facts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "questions": {
+        "main": [
+          [
+            {
+              "node": "Merge7",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "facts": {
+        "main": [
+          [
+            {
+              "node": "Merge7",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge7": {
+        "main": [
+          [
+            {
+              "node": "Deduplicate & Rank",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "instanceId": "a947345aecb0b9369a225bdcd776aa30f2d6dde315668c612fe2da333d84af9a"
+    }
+  }

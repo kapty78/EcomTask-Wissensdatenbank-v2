@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEPA Mandate Download Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .download-history {
+            margin-top: 30px;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .history-item {
+            margin-bottom: 8px;
+            padding: 5px;
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>SEPA Mandate Download Test</h1>
+    <p>Click the button below to download a SEPA Mandate PDF file. Each download will have an incremented number in the filename.</p>
+    
+    <button onclick="downloadPDF()">Download SEPA Mandate</button>
+    <button onclick="downloadPDFDirect()">Direct Download (Alternative)</button>
+    
+    <div class="download-history">
+        <h3>Download History</h3>
+        <div id="history-container"></div>
+    </div>
+    
+    <script>
+        // Keep track of downloads
+        const downloadHistory = [];
+        
+        // Function to download using the JSON endpoint
+        function downloadPDF() {
+            // Get current time for display
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString();
+            
+            // Fetch data from API
+            fetch('/api/download/pdf')
+                .then(response => response.json())
+                .then(data => {
+                    // Extract filename and content from response
+                    const { filename, file_content } = data;
+                    
+                    // Convert base64 content to Blob
+                    const byteCharacters = atob(file_content);
+                    const byteArrays = [];
+                    
+                    for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+                        const slice = byteCharacters.slice(offset, offset + 512);
+                        
+                        const byteNumbers = new Array(slice.length);
+                        for (let i = 0; i < slice.length; i++) {
+                            byteNumbers[i] = slice.charCodeAt(i);
+                        }
+                        
+                        const byteArray = new Uint8Array(byteNumbers);
+                        byteArrays.push(byteArray);
+                    }
+                    
+                    const blob = new Blob(byteArrays, { type: 'application/pdf' });
+                    
+                    // Create download link
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Clean up
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    // Add to history
+                    downloadHistory.push({
+                        time: timestamp,
+                        filename: filename
+                    });
+                    updateHistoryDisplay();
+                })
+                .catch(error => {
+                    console.error('Error downloading PDF:', error);
+                    alert('Failed to download the PDF. See console for details.');
+                });
+        }
+        
+        // Alternative method using direct download
+        function downloadPDFDirect() {
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString();
+            
+            // Direct approach using window.location
+            window.location.href = '/api/download/pdf-direct';
+            
+            // Add to history with dummy filename (can't know the exact number)
+            setTimeout(() => {
+                downloadHistory.push({
+                    time: timestamp,
+                    filename: "SEPA-Lastschriftmandat_[auto-incremented].pdf"
+                });
+                updateHistoryDisplay();
+            }, 1000);
+        }
+        
+        function updateHistoryDisplay() {
+            const container = document.getElementById('history-container');
+            container.innerHTML = '';
+            
+            if (downloadHistory.length === 0) {
+                container.innerHTML = '<p>No downloads yet.</p>';
+                return;
+            }
+            
+            downloadHistory.forEach((item, index) => {
+                const historyItem = document.createElement('div');
+                historyItem.className = 'history-item';
+                historyItem.textContent = `${index + 1}. ${item.time} - Downloaded: ${item.filename}`;
+                container.appendChild(historyItem);
+            });
+        }
+        
+        // Initialize history display
+        updateHistoryDisplay();
+    </script>
+</body>
+</html> 

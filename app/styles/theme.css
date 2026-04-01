@@ -1,0 +1,335 @@
+:root {
+  /* Neue Farbpalette */
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #1e1e1e;
+  --bg-tertiary: #1a1a1a;
+  --bg-sidebar: #1a1a1a;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-selected: rgba(255, 255, 255, 0.08);
+  --user-message-bg: #1e1e1e;
+  
+  /* Text colors */
+  --text-primary: oklch(0.985 0 0);
+  --text-secondary: oklch(0.708 0 0);
+  --text-tertiary: oklch(0.708 0 0);
+  --text-disabled: rgba(255, 255, 255, 0.3);
+  
+  /* Button/Border colors */
+  --border-light: rgba(255, 255, 255, 0.1);
+  --border-medium: rgba(255, 255, 255, 0.2);
+  
+  /* Status colors */
+  --status-default: rgba(255, 255, 255, 0.6);
+  --status-success: #10a37f;
+  --status-pending: #8e8ea0;
+  --status-error: #8e8ea0;
+  
+  /* Accent color (ChatGPT green) */
+  --accent-primary: #10a37f;
+  --accent-primary-hover: #0f906f;
+  
+  /* Border radius */
+  --border-radius-sm: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --border-radius-xl: 12px;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+  /* Chat message max width */
+  --chat-message-max-width: 75ch;
+}
+
+/* Add this to your global styles */
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Custom scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) var(--bg-tertiary);
+}
+
+/* ChatGPT-like button styles */
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: white;
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-primary-hover);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  transition: background-color 0.2s;
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
+}
+
+/* ChatGPT-like input style */
+.input-chatgpt {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--border-radius-md);
+  color: var(--text-primary);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.input-chatgpt:focus {
+  outline: none;
+  border-color: var(--border-medium);
+}
+
+/* Status indicators */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.status-todo {
+  border: 1.5px solid var(--status-default);
+}
+
+.status-in-progress {
+  background-color: var(--bg-primary);
+  border: 1.5px solid var(--status-pending);
+}
+
+.status-done {
+  background-color: var(--status-success);
+  border: 1.5px solid var(--status-success);
+}
+
+/* Typewriter animation for assistant messages */
+@keyframes typewriter {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+.typewriter-text {
+  display: inline-block;
+  overflow: hidden;
+  white-space: pre-wrap;
+  animation: typewriter 0.25s steps(40, end) forwards;
+}
+
+.typewriter-container p,
+.typewriter-container h1,
+.typewriter-container h2,
+.typewriter-container h3,
+.typewriter-container h4,
+.typewriter-container h5,
+.typewriter-container h6,
+.typewriter-container ul,
+.typewriter-container ol,
+.typewriter-container li,
+.typewriter-container blockquote,
+.typewriter-container pre,
+.typewriter-container code {
+  overflow: hidden;
+}
+
+/* Message hover effects */
+.message-actions {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  z-index: 10;
+}
+
+.user-message .message-actions {
+  bottom: -36px;
+  right: 0;
+}
+
+.ai-message .message-actions {
+  bottom: -36px;
+  left: 0;
+}
+
+.message-container:hover .message-actions {
+  opacity: 1;
+}
+
+.message-action-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.message-action-button:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Increased spacing between messages */
+.message-group {
+  margin-bottom: 1.5rem;
+}
+
+/* User message style - matching ChatGPT */
+.user-message {
+  background-color: var(--user-message-bg);
+  border-radius: 12px 12px 0 12px;
+  padding: 12px 16px;
+  width: fit-content;
+  margin-left: auto;
+  max-width: var(--chat-message-max-width);
+  position: relative;
+}
+
+/* AI message style - matching ChatGPT */
+.ai-message {
+  background-color: transparent;
+  padding: 12px 16px 12px 0;
+  width: 100%;
+  max-width: var(--chat-message-max-width);
+  position: relative;
+}
+
+/* Message divider line like ChatGPT */
+.message-divider {
+  border-bottom: 1px solid var(--border-light);
+  margin: 24px 0;
+  width: 100%;
+}
+
+/* ChatGPT-style input area */
+.chatgpt-input-container {
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background-color: #40414f;
+  padding: 14px 12px;
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+  max-width: 48rem;
+  margin: 0 auto;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.chatgpt-input {
+  resize: none;
+  background-color: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1.5;
+  padding: 6px 40px 6px 48px;
+  min-height: 24px;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.chatgpt-input:focus {
+  outline: none;
+}
+
+.chatgpt-input-actions {
+  display: flex;
+  align-items: center;
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  gap: 8px;
+}
+
+.chatgpt-submit-button {
+  position: absolute;
+  right: 12px;
+  bottom: 14px;
+  background-color: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chatgpt-submit-button:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.chatgpt-submit-button:not(:disabled):hover {
+  background-color: var(--bg-hover);
+}
+
+/* Input actions buttons */
+.input-action-button {
+  background-color: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.input-action-button:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Remove divider line */
+.chat-container .border-t {
+  border-top: none !important;
+} 

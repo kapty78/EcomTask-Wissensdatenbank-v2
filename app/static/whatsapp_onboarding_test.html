@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Business API Onboarding Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f2f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #1877f2;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #65676b;
+        }
+        .onboarding-section {
+            margin-bottom: 30px;
+        }
+        .onboarding-section h2 {
+            color: #1c1e21;
+            margin-bottom: 15px;
+        }
+        .button-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .fb-button {
+            background-color: #1877f2;
+            border: 0;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 16px;
+            font-weight: bold;
+            height: 40px;
+            padding: 0 24px;
+            transition: background-color 0.3s;
+        }
+        .fb-button:hover {
+            background-color: #166fe5;
+        }
+        .response-container {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .response-container pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success {
+            background-color: #e7f3ff;
+            color: #1877f2;
+        }
+        .status.error {
+            background-color: #ffebe9;
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>WhatsApp Business API Onboarding</h1>
+            <p>Test the WhatsApp Business API onboarding flow using Meta's Embedded Signup</p>
+        </div>
+
+        <div class="onboarding-section">
+            <h2>Start Onboarding</h2>
+            <p>Enter your business email and complete the WhatsApp Business API onboarding process.</p>
+            
+            <div style="margin-bottom: 20px;">
+                <label for="businessEmail" style="display: block; margin-bottom: 5px; font-weight: bold;">Business Email:</label>
+                <input type="email" id="businessEmail" placeholder="Enter your business email" 
+                       style="width: 300px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+            </div>
+            
+            <div class="button-container">
+                <button onclick="launchWhatsAppSignup()" class="fb-button">Login with Facebook</button>
+                <button onclick="checkOnboardingStatus()" class="fb-button" style="margin-left: 10px; background-color: #6c757d;">Check Status</button>
+                <button onclick="printDebugInfo()" class="fb-button" style="margin-left: 10px; background-color: #17a2b8;">Debug Console</button>
+            </div>
+
+            <div class="response-container">
+                <h3>Response Data:</h3>
+                <pre id="responseData">No data yet...</pre>
+            </div>
+
+            <div id="statusMessage" class="status"></div>
+        </div>
+    </div>
+
+    <!-- Facebook SDK -->
+    <script>
+      window.fbAsyncInit = function() {
+        FB.init({
+          appId            : '1278546197042106',
+          autoLogAppEvents : true,
+          xfbml            : true,
+          version          : 'v23.0'
+        });
+      };
+    </script>
+    <script async defer crossorigin="anonymous"
+      src="https://connect.facebook.net/en_US/sdk.js">
+    </script>
+
+    <script>
+        // Backend API URL - WICHTIG: Muss auf Render-Backend zeigen!
+        const API_BASE_URL = 'https://timeglobe-server.ecomtask.de';
+
+        // Global variables to store signup data and auth code
+        let signupData = null;
+        let authCode = null;
+
+        // Session logging message event listener
+        window.addEventListener('message', (event) => {
+            if (!event.origin.endsWith('facebook.com')) return;
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'WA_EMBEDDED_SIGNUP') {
+                    console.log('WhatsApp Signup Event:', data);
+                    displayResponse(data);
+                    
+                    // Store signup data for later use
+                    signupData = data;
+                    
+                    // Handle successful completion
+                    if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA' || data.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
+                        showStatus('success', 'Onboarding completed successfully! Click "Complete Onboarding" to finalize.');
+                        showCompleteOnboardingButton();
+                    } else if (data.event === 'CANCEL') {
+                        showStatus('error', 'Onboarding was cancelled or encountered an error.');
+                    }
+                }
+            } catch (e) {
+                console.log('Raw message event:', event.data);
+                displayResponse(event.data);
+            }
+        });
+
+        // Response callback
+        const fbLoginCallback = (response) => {
+            console.log('=== FACEBOOK LOGIN CALLBACK DEBUG ===');
+            console.log('Full Facebook Response Object:', response);
+            console.log('Response Type:', typeof response);
+            console.log('Response Keys:', Object.keys(response));
+            
+            if (response.authResponse) {
+                console.log('--- AUTH RESPONSE DETAILS ---');
+                console.log('Full authResponse:', response.authResponse);
+                console.log('authResponse Keys:', Object.keys(response.authResponse));
+                
+                let code = response.authResponse.code;
+                
+                // Facebook might return code as URL-encoded parameter string
+                // Extract the actual code if it's in format "cb=XXX&..."
+                if (code && code.startsWith('cb=')) {
+                    console.log('⚠️  Code is in URL parameter format, extracting actual code...');
+                    const match = code.match(/cb=([^&]+)/);
+                    if (match) {
+                        code = match[1];
+                        console.log('✅ Extracted code:', code.substring(0, 50) + '...');
+                    }
+                }
+                
+                authCode = code;
+                
+                console.log('Authorization Code:', code);
+                console.log('Code Length:', code ? code.length : 'N/A');
+                console.log('Code First 50 chars:', code ? code.substring(0, 50) + '...' : 'N/A');
+                
+                // Check for any redirect URI information
+                if (response.authResponse.redirect_uri) {
+                    console.log('🎯 REDIRECT URI FOUND:', response.authResponse.redirect_uri);
+                }
+                
+                // Log other auth response properties
+                console.log('Access Token:', response.authResponse.accessToken ? 'Present' : 'Not present');
+                console.log('User ID:', response.authResponse.userID || 'N/A');
+                console.log('Expires In:', response.authResponse.expiresIn || 'N/A');
+                console.log('Signed Request:', response.authResponse.signedRequest ? 'Present' : 'Not present');
+                
+                showStatus('success', 'Received authorization code. Check console for full details.');
+            } else {
+                console.log('--- LOGIN FAILED ---');
+                console.log('Status:', response.status || 'Unknown');
+                console.log('Error:', response.error || 'No error details');
+                console.log('Error Code:', response.error?.code || 'N/A');
+                console.log('Error Message:', response.error?.message || 'N/A');
+                console.log('Full Login Response:', response);
+                
+                showStatus('error', 'Login was not completed successfully. Check console for details.');
+            }
+            
+            console.log('=== END FACEBOOK DEBUG INFO ===');
+        };
+
+        // Debug function to print current configuration
+        const printDebugInfo = () => {
+            console.log('=== FACEBOOK OAUTH CONFIGURATION DEBUG ===');
+            console.log('Config ID:', '966700112247031');
+            console.log('Current Domain:', window.location.origin);
+            console.log('Current URL:', window.location.href);
+            console.log('Expected Backend Callback:', 'https://timeglobe-server.ecomtask.de/api/whatsapp/oauth/callback');
+            console.log('Facebook SDK Version:', 'v23.0');
+            console.log('=== END CONFIGURATION DEBUG ===');
+        };
+
+        // Launch method
+        const launchWhatsAppSignup = () => {
+            printDebugInfo(); // Print debug info before starting
+            
+            console.log('🚀 Starting Facebook Login with Embedded Signup...');
+            
+            FB.login(fbLoginCallback, {
+                config_id: '966700112247031', // 🔧 UPDATE THIS if you create a new configuration
+                response_type: 'code',
+                override_default_response_type: true,
+                extras: {
+                    setup: {},
+                    featureType: '', // Leave blank for default flow
+                    sessionInfoVersion: '3'
+                }
+            });
+        };
+
+        // Helper functions
+        function displayResponse(data) {
+            const responseElement = document.getElementById('responseData');
+            responseElement.textContent = JSON.stringify(data, null, 2);
+        }
+
+        function showStatus(type, message) {
+            const statusElement = document.getElementById('statusMessage');
+            statusElement.className = `status ${type}`;
+            statusElement.textContent = message;
+        }
+
+        function showCompleteOnboardingButton() {
+            const buttonContainer = document.querySelector('.button-container');
+            
+            // Remove existing complete button if any
+            const existingCompleteBtn = document.getElementById('completeOnboardingBtn');
+            if (existingCompleteBtn) {
+                existingCompleteBtn.remove();
+            }
+            
+            // Create complete onboarding button
+            const completeBtn = document.createElement('button');
+            completeBtn.id = 'completeOnboardingBtn';
+            completeBtn.className = 'fb-button';
+            completeBtn.textContent = 'Complete Onboarding';
+            completeBtn.style.marginLeft = '10px';
+            completeBtn.style.backgroundColor = '#42a942';
+            completeBtn.onclick = completeOnboarding;
+            
+            buttonContainer.appendChild(completeBtn);
+        }
+
+        function showFacebookPermissionsButton(permissionsUrl) {
+            const buttonContainer = document.querySelector('.button-container');
+            
+            // Remove existing permissions button if any
+            const existingPermissionsBtn = document.getElementById('facebookPermissionsBtn');
+            if (existingPermissionsBtn) {
+                existingPermissionsBtn.remove();
+            }
+            
+            // Create Facebook permissions button
+            const permissionsBtn = document.createElement('button');
+            permissionsBtn.id = 'facebookPermissionsBtn';
+            permissionsBtn.className = 'fb-button';
+            permissionsBtn.textContent = 'Grant Messaging Permissions';
+            permissionsBtn.style.marginLeft = '10px';
+            permissionsBtn.style.backgroundColor = '#1877f2';
+            permissionsBtn.onclick = function() {
+                window.open(permissionsUrl, '_blank');
+            };
+            
+            buttonContainer.appendChild(permissionsBtn);
+            
+            // Update status message to include instructions
+            showStatus('success', 
+                'Onboarding completed! Please click "Grant Messaging Permissions" to allow EcomTask to send messages on your behalf.'
+            );
+        }
+
+        async function completeOnboarding() {
+            if (!signupData || !authCode) {
+                showStatus('error', 'Missing signup data or auth code. Please complete the Facebook login and WhatsApp signup first.');
+                return;
+            }
+
+            const businessEmail = document.getElementById('businessEmail').value;
+            if (!businessEmail) {
+                showStatus('error', 'Please enter your business email address.');
+                return;
+            }
+
+            const completeBtn = document.getElementById('completeOnboardingBtn');
+            completeBtn.disabled = true;
+            completeBtn.textContent = 'Completing...';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/whatsapp/complete-onboarding-public`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        auth_code: authCode,
+                        business_email: businessEmail,
+                        signup_data: {
+                            business_id: signupData.business_id || signupData.data?.business_id,
+                            phone_number_id: signupData.phone_number_id || signupData.data?.phone_number_id,
+                            waba_id: signupData.waba_id || signupData.data?.waba_id,
+                            event: signupData.event,
+                            type: signupData.type,
+                            version: signupData.version
+                        }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showStatus('success', `Onboarding completed successfully! Phone Number ID: ${result.phone_number_id}`);
+                    displayResponse(result);
+                    completeBtn.textContent = 'Completed ✓';
+                    completeBtn.style.backgroundColor = '#28a745';
+                    
+                    // Show Facebook permissions button if URL is provided
+                    if (result.facebook_permissions_url) {
+                        showFacebookPermissionsButton(result.facebook_permissions_url);
+                    }
+                } else {
+                    showStatus('error', `Failed to complete onboarding: ${result.detail || result.message}`);
+                    completeBtn.disabled = false;
+                    completeBtn.textContent = 'Complete Onboarding';
+                }
+            } catch (error) {
+                console.error('Error completing onboarding:', error);
+                showStatus('error', `Error completing onboarding: ${error.message}`);
+                completeBtn.disabled = false;
+                completeBtn.textContent = 'Complete Onboarding';
+            }
+        }
+
+        // Function to check onboarding status
+        async function checkOnboardingStatus() {
+            const businessEmail = document.getElementById('businessEmail').value;
+            if (!businessEmail) {
+                showStatus('error', 'Please enter your business email address to check status.');
+                return;
+            }
+
+            try {
+                showStatus('info', 'Checking status...');
+                
+                const response = await fetch(`${API_BASE_URL}/api/whatsapp/status-public?business_email=${encodeURIComponent(businessEmail)}`);
+                
+                if (response.ok) {
+                    const status = await response.json();
+                    displayResponse(status);
+                    
+                    if (status.is_connected) {
+                        const webhookStatus = status.whatsapp_profile?.webhook_configured ? '✅ Configured' : '⚠️ Manual setup required';
+                        showStatus('success', `✅ WhatsApp is connected! Number: ${status.whatsapp_number || 'N/A'} | Webhook: ${webhookStatus}`);
+                    } else {
+                        showStatus('info', `📋 Status: ${status.waba_status} | Connected: ${status.is_connected ? 'Yes' : 'No'}`);
+                    }
+                } else if (response.status === 404) {
+                    showStatus('error', 'Business not found with the provided email address.');
+                    displayResponse({
+                        error: "Business not found",
+                        message: "Please check your email address or register first"
+                    });
+                } else {
+                    const errorData = await response.json();
+                    showStatus('error', `Failed to check status: ${errorData.detail || 'Unknown error'}`);
+                    displayResponse(errorData);
+                }
+                
+            } catch (error) {
+                console.error('Error checking status:', error);
+                showStatus('error', `Error checking status: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html> 

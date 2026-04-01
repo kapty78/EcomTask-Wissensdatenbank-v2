@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; cursor: pointer; }
+        textarea { width: 100%; height: 200px; margin: 10px 0; }
+        #status { margin-top: 20px; padding: 10px; background: #f0f0f0; }
+        .progress { height: 20px; background: #e0e0e0; margin-top: 10px; }
+        .progress-bar { height: 100%; background: #007bff; width: 0%; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+    <h1>Upload Tester</h1>
+    
+    <h2>Direkter Text-Upload</h2>
+    <div>
+        <label for="knowledge-base-id">Knowledge Base ID:</label>
+        <input type="text" id="knowledge-base-id" value="default">
+    </div>
+    <div>
+        <label for="source-name">Quellenname:</label>
+        <input type="text" id="source-name" value="Test Dokument">
+    </div>
+    <div>
+        <label for="text-content">Textinhalt:</label>
+        <textarea id="text-content">Dies ist ein Testdokument für EcomTask. Es enthält wichtige Informationen zur Textverarbeitung und Faktenextraktion. Dieser Text soll lang genug sein, um die Faktenextraktion zu testen, aber nicht zu lang, um die Verarbeitung zu verzögern.</textarea>
+    </div>
+    <button id="upload-button">Upload Text</button>
+    
+    <div id="status">Status: Bereit</div>
+    <div class="progress">
+        <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    
+    <script>
+        document.getElementById('upload-button').addEventListener('click', async () => {
+            const knowledgeBaseId = document.getElementById('knowledge-base-id').value;
+            const sourceName = document.getElementById('source-name').value;
+            const content = document.getElementById('text-content').value;
+            const requestId = 'test-' + Date.now();
+            
+            // Status aktualisieren
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = 'Status: Upload wird gestartet...';
+            
+            // FormData erstellen
+            const formData = new FormData();
+            formData.append('knowledgeBaseId', knowledgeBaseId);
+            formData.append('sourceType', 'text');
+            formData.append('sourceName', sourceName);
+            formData.append('content', content);
+            formData.append('embeddingsProvider', 'openai');
+            formData.append('requestId', requestId);
+            
+            try {
+                // Upload starten
+                const response = await fetch('/api/knowledge/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+                }
+                
+                const result = await response.json();
+                statusDiv.textContent = `Status: Upload erfolgreich!\nErgebnis: ${JSON.stringify(result, null, 2)}`;
+                
+                // Fortschrittsüberwachung starten
+                startProgressCheck(requestId);
+            } catch (error) {
+                statusDiv.textContent = `Status: Fehler beim Upload: ${error.message}`;
+                console.error('Upload error:', error);
+            }
+        });
+        
+        async function startProgressCheck(requestId) {
+            const statusDiv = document.getElementById('status');
+            const progressBar = document.getElementById('progress-bar');
+            let checkInterval;
+            
+            try {
+                checkInterval = setInterval(async () => {
+                    const response = await fetch(`/api/knowledge/upload-status?requestId=${requestId}`);
+                    if (response.ok) {
+                        const status = await response.json();
+                        
+                        if (status && status.progress !== undefined) {
+                            progressBar.style.width = `${status.progress}%`;
+                            statusDiv.textContent = `Status: ${status.status} (${status.progress}%)\n${status.message || ''}`;
+                            
+                            if (status.status === 'completed' || status.status === 'failed') {
+                                clearInterval(checkInterval);
+                            }
+                        }
+                    }
+                }, 1000);
+            } catch (error) {
+                statusDiv.textContent = `Status: Fehler bei der Statusabfrage: ${error.message}`;
+                clearInterval(checkInterval);
+            }
+        }
+    </script>
+</body>
+</html> 

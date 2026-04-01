@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build:vercel",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "SKIP_TYPECHECKING": "true",
+    "NEXT_DISABLE_ESLINT": "1"
+  },
+  "crons": [
+    {
+      "path": "/api/cron/restore-stale-facts",
+      "schedule": "*/2 * * * *"
+    }
+  ],
+  "functions": {
+    "app/api/cron/restore-stale-facts/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/knowledge/upload/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/cursor/upload/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/cursor/process-chunk/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "app/api/cursor/process-document-chunks/route.ts": {
+      "memory": 1024,
+      "maxDuration": 300
+    },
+    "app/api/cursor/upload-large/route.ts": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
+    "app/api/cursor/upload-folder/route.ts": {
+      "maxDuration": 300
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Credentials", "value": "true" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
+        { "key": "Access-Control-Allow-Headers", "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization" }
+      ]
+    }
+  ]
+}

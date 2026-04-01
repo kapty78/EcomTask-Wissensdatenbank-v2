@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Business API - Production Onboarding</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .auth-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border-left: 5px solid #25D366;
+        }
+        
+        .auth-form {
+            display: flex;
+            gap: 15px;
+            align-items: end;
+            flex-wrap: wrap;
+        }
+        
+        .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #25D366;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(37, 211, 102, 0.3);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #495057);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+        }
+        
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            border-left: 5px solid #007bff;
+        }
+        
+        .status-card.success {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        
+        .status-card.error {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
+        
+        .status-card.warning {
+            border-left-color: #ffc107;
+            background: #fff3cd;
+        }
+        
+        .step {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+        
+        .step.active {
+            border-color: #25D366;
+            box-shadow: 0 5px 15px rgba(37, 211, 102, 0.1);
+        }
+        
+        .step.completed {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+        
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .step-number {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 15px;
+        }
+        
+        .step.active .step-number {
+            background: #25D366;
+            color: white;
+        }
+        
+        .step.completed .step-number {
+            background: #28a745;
+            color: white;
+        }
+        
+        .step-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #25D366;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .code-block {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        
+        .auth-status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .auth-status.authenticated {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .auth-status.unauthenticated {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 WhatsApp Business API</h1>
+            <p>Production Onboarding - Secure & Authenticated</p>
+        </div>
+        
+        <div class="content">
+            <!-- Authentication Section -->
+            <div class="auth-section">
+                <h2>🔐 Authentication Required</h2>
+                <p style="margin-bottom: 20px;">This is the production onboarding flow. You must be logged in to continue.</p>
+                
+                <div id="authStatus" class="auth-status unauthenticated">
+                    ❌ Not authenticated - Please log in first
+                </div>
+                
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" placeholder="your@email.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" placeholder="Your password" required>
+                    </div>
+                    <button class="btn" onclick="login()">Login</button>
+                    <button class="btn btn-secondary" onclick="logout()">Logout</button>
+                </div>
+            </div>
+            
+            <!-- Onboarding Steps -->
+            <div id="onboardingSection" class="hidden">
+                <h2>📋 WhatsApp Business API Setup</h2>
+                
+                <!-- Step 1: Status Check -->
+                <div class="step" id="step1">
+                    <div class="step-header">
+                        <div class="step-number">1</div>
+                        <div class="step-title">Check Current Status</div>
+                    </div>
+                    <p>Check your current WhatsApp Business API onboarding status.</p>
+                    <button class="btn" onclick="checkStatus()">Check Status</button>
+                    <div id="statusResult" class="status-card hidden"></div>
+                </div>
+                
+                <!-- Step 2: Facebook Embedded Signup -->
+                <div class="step" id="step2">
+                    <div class="step-header">
+                        <div class="step-number">2</div>
+                        <div class="step-title">Facebook Embedded Signup</div>
+                    </div>
+                    <p>Connect your Facebook Business Account to WhatsApp Business API.</p>
+                    <button class="btn" onclick="startFacebookSignup()">Start Facebook Signup</button>
+                    <div id="facebookSignupResult" class="status-card hidden"></div>
+                </div>
+                
+                <!-- Step 3: Complete Onboarding -->
+                <div class="step" id="step3">
+                    <div class="step-header">
+                        <div class="step-number">3</div>
+                        <div class="step-title">Complete Onboarding</div>
+                    </div>
+                    <p>Finalize your WhatsApp Business API setup with the data from Facebook.</p>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="authCode">Authorization Code (from Facebook)</label>
+                        <input type="text" id="authCode" placeholder="Authorization code from Facebook signup">
+                    </div>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="businessId">Business ID</label>
+                        <input type="text" id="businessId" placeholder="Business ID from Facebook">
+                    </div>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="phoneNumberId">Phone Number ID</label>
+                        <input type="text" id="phoneNumberId" placeholder="Phone Number ID from Facebook">
+                    </div>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="wabaId">WABA ID</label>
+                        <input type="text" id="wabaId" placeholder="WhatsApp Business Account ID">
+                    </div>
+                    <button class="btn" onclick="completeOnboarding()">Complete Onboarding</button>
+                    <div id="onboardingResult" class="status-card hidden"></div>
+                </div>
+                
+                <!-- Step 4: Configure Webhook -->
+                <div class="step" id="step4">
+                    <div class="step-header">
+                        <div class="step-number">4</div>
+                        <div class="step-title">Configure Webhook</div>
+                    </div>
+                    <p>Set up webhook to receive WhatsApp messages.</p>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="webhookUrl">Webhook URL</label>
+                        <input type="url" id="webhookUrl" placeholder="https://your-domain.com/api/whatsapp/webhook">
+                    </div>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="verifyToken">Verify Token</label>
+                        <input type="text" id="verifyToken" placeholder="Your webhook verify token">
+                    </div>
+                    <button class="btn" onclick="configureWebhook()">Configure Webhook</button>
+                    <button class="btn btn-secondary" onclick="checkWebhookStatus()">Check Webhook Status</button>
+                    <div id="webhookResult" class="status-card hidden"></div>
+                </div>
+                
+                <!-- Step 5: Phone Verification -->
+                <div class="step" id="step5">
+                    <div class="step-header">
+                        <div class="step-number">5</div>
+                        <div class="step-title">Phone Number Verification</div>
+                    </div>
+                    <p>Verify your WhatsApp Business phone number.</p>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="phoneIdForVerification">Phone Number ID</label>
+                        <input type="text" id="phoneIdForVerification" placeholder="Phone Number ID from step 3">
+                    </div>
+                    <button class="btn" onclick="requestPhoneCode()">Request Verification Code</button>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="otpCode">Verification Code</label>
+                        <input type="text" id="otpCode" placeholder="Code received via SMS">
+                    </div>
+                    <button class="btn" onclick="verifyPhoneCode()">Verify Phone Number</button>
+                    <div id="phoneVerificationResult" class="status-card hidden"></div>
+                </div>
+                
+                <!-- Step 6: Test Messaging -->
+                <div class="step" id="step6">
+                    <div class="step-header">
+                        <div class="step-number">6</div>
+                        <div class="step-title">Test Messaging</div>
+                    </div>
+                    <p>Send a test message to verify everything is working.</p>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="testRecipient">Recipient Phone Number</label>
+                        <input type="tel" id="testRecipient" placeholder="+1234567890">
+                    </div>
+                    <div class="form-group" style="margin: 15px 0;">
+                        <label for="testMessage">Test Message</label>
+                        <input type="text" id="testMessage" value="Hello! This is a test message from WhatsApp Business API.">
+                    </div>
+                    <button class="btn" onclick="sendTestMessage()">Send Test Message</button>
+                    <div id="testMessageResult" class="status-card hidden"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Facebook SDK -->
+    <script>
+        window.fbAsyncInit = function() {
+            FB.init({
+                appId: '1278546197042106',
+                cookie: true,
+                xfbml: true,
+                version: 'v22.0'
+            });
+        };
+
+        (function(d, s, id) {
+            var js, fjs = d.getElementsByTagName(s)[0];
+            if (d.getElementById(id)) return;
+            js = d.createElement(s); js.id = id;
+            js.src = "https://connect.facebook.net/en_US/sdk.js";
+            fjs.parentNode.insertBefore(js, fjs);
+        }(document, 'script', 'facebook-jssdk'));
+    </script>
+
+    <script>
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = null;
+        
+        // Check authentication status on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            if (authToken) {
+                validateToken();
+            }
+        });
+        
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (!email || !password) {
+                alert('Please enter both email and password');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.access_token;
+                    localStorage.setItem('authToken', authToken);
+                    updateAuthStatus(true, email);
+                    showOnboardingSection();
+                } else {
+                    alert('Login failed: ' + (data.detail || 'Invalid credentials'));
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                alert('Login failed: ' + error.message);
+            }
+        }
+        
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('authToken');
+            updateAuthStatus(false);
+            hideOnboardingSection();
+        }
+        
+        async function validateToken() {
+            if (!authToken) {
+                updateAuthStatus(false);
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/status-auth', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    currentUser = data;
+                    updateAuthStatus(true, data.business_email);
+                    showOnboardingSection();
+                } else {
+                    // Token is invalid
+                    logout();
+                }
+            } catch (error) {
+                console.error('Token validation error:', error);
+                logout();
+            }
+        }
+        
+        function updateAuthStatus(authenticated, email = null) {
+            const statusDiv = document.getElementById('authStatus');
+            if (authenticated) {
+                statusDiv.className = 'auth-status authenticated';
+                statusDiv.innerHTML = `✅ Authenticated as: ${email}`;
+            } else {
+                statusDiv.className = 'auth-status unauthenticated';
+                statusDiv.innerHTML = '❌ Not authenticated - Please log in first';
+            }
+        }
+        
+        function showOnboardingSection() {
+            document.getElementById('onboardingSection').classList.remove('hidden');
+        }
+        
+        function hideOnboardingSection() {
+            document.getElementById('onboardingSection').classList.add('hidden');
+        }
+        
+        async function checkStatus() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/status-auth', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('statusResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Current Status</h3>
+                        <p><strong>Business:</strong> ${data.business_name}</p>
+                        <p><strong>Email:</strong> ${data.business_email}</p>
+                        <p><strong>API Key:</strong> ${data.has_api_key ? '✅ Available' : '❌ Missing'}</p>
+                        <p><strong>WhatsApp Profile:</strong> ${data.has_whatsapp_profile ? '✅ Available' : '❌ Missing'}</p>
+                        <p><strong>WABA Status:</strong> ${data.waba_status}</p>
+                        <p><strong>Onboarding Complete:</strong> ${data.onboarding_complete ? '✅ Yes' : '❌ No'}</p>
+                        ${data.phone_number_id ? `<p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>` : ''}
+                        ${data.waba_id ? `<p><strong>WABA ID:</strong> ${data.waba_id}</p>` : ''}
+                    `;
+                    
+                    // Auto-fill form fields if data is available
+                    if (data.phone_number_id) {
+                        document.getElementById('phoneIdForVerification').value = data.phone_number_id;
+                    }
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Error</h3><p>${data.detail || 'Failed to get status'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Status check error:', error);
+                const resultDiv = document.getElementById('statusResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        function startFacebookSignup() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            FB.login(function(response) {
+                if (response.authResponse) {
+                    console.log('Facebook login response:', response);
+                    const resultDiv = document.getElementById('facebookSignupResult');
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Facebook Login Successful</h3>
+                        <p>Please complete the embedded signup process and copy the authorization code, business ID, phone number ID, and WABA ID to step 3.</p>
+                        <p><strong>Access Token:</strong> ${response.authResponse.accessToken.substring(0, 30)}...</p>
+                    `;
+                    resultDiv.classList.remove('hidden');
+                } else {
+                    console.log('User cancelled login or did not fully authorize.');
+                    const resultDiv = document.getElementById('facebookSignupResult');
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Facebook Login Failed</h3><p>User cancelled login or did not fully authorize.</p>`;
+                    resultDiv.classList.remove('hidden');
+                }
+            }, {
+                config_id: '966700112247031',
+                response_type: 'code',
+                override_default_response_type: true,
+                extras: {
+                    setup: {}
+                }
+            });
+        }
+        
+        async function completeOnboarding() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            const authCode = document.getElementById('authCode').value;
+            const businessId = document.getElementById('businessId').value;
+            const phoneNumberId = document.getElementById('phoneNumberId').value;
+            const wabaId = document.getElementById('wabaId').value;
+            
+            if (!authCode || !businessId || !phoneNumberId || !wabaId) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/complete-onboarding-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        auth_code: authCode,
+                        signup_data: {
+                            business_id: businessId,
+                            phone_number_id: phoneNumberId,
+                            waba_id: wabaId,
+                            event: "FINISH",
+                            type: "WA_EMBEDDED_SIGNUP",
+                            version: "3"
+                        }
+                    })
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('onboardingResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Onboarding Completed!</h3>
+                        <p>${data.message}</p>
+                        <p><strong>Business ID:</strong> ${data.business_id}</p>
+                        <p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>
+                        <p><strong>WABA ID:</strong> ${data.waba_id}</p>
+                    `;
+                    
+                    // Auto-fill phone number ID for verification
+                    document.getElementById('phoneIdForVerification').value = data.phone_number_id;
+                    
+                    // Mark step as completed
+                    document.getElementById('step3').classList.add('completed');
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Onboarding Failed</h3><p>${data.detail || 'Unknown error'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Onboarding error:', error);
+                const resultDiv = document.getElementById('onboardingResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        async function configureWebhook() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            const webhookUrl = document.getElementById('webhookUrl').value;
+            const verifyToken = document.getElementById('verifyToken').value;
+            
+            if (!webhookUrl || !verifyToken) {
+                alert('Please fill in webhook URL and verify token');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/configure-webhook-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        webhook_url: webhookUrl,
+                        verify_token: verifyToken
+                    })
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('webhookResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Webhook Configured!</h3>
+                        <p>${data.message}</p>
+                        <p><strong>Webhook URL:</strong> ${data.webhook_url}</p>
+                        <p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>
+                        <div class="code-block">${JSON.stringify(data.instructions, null, 2)}</div>
+                    `;
+                    
+                    // Mark step as completed
+                    document.getElementById('step4').classList.add('completed');
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Webhook Configuration Failed</h3><p>${data.detail || 'Unknown error'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Webhook configuration error:', error);
+                const resultDiv = document.getElementById('webhookResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        async function checkWebhookStatus() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/webhook-status-auth', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('webhookResult');
+                
+                if (response.ok) {
+                    resultDiv.className = data.webhook_configured ? 'status-card success' : 'status-card warning';
+                    resultDiv.innerHTML = `
+                        <h3>${data.webhook_configured ? '✅' : '⚠️'} Webhook Status</h3>
+                        <p>${data.message}</p>
+                        <p><strong>Business:</strong> ${data.business_name}</p>
+                        <p><strong>Configured:</strong> ${data.webhook_configured ? 'Yes' : 'No'}</p>
+                        ${data.webhook_url ? `<p><strong>URL:</strong> ${data.webhook_url}</p>` : ''}
+                        ${data.phone_number_id ? `<p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>` : ''}
+                    `;
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Error</h3><p>${data.detail || 'Failed to check webhook status'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Webhook status error:', error);
+                const resultDiv = document.getElementById('webhookResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        async function requestPhoneCode() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            const phoneNumberId = document.getElementById('phoneIdForVerification').value;
+            
+            if (!phoneNumberId) {
+                alert('Please enter phone number ID');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/phone/request-code-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        phone_number_id: phoneNumberId
+                    })
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('phoneVerificationResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Verification Code Requested</h3>
+                        <p>${data.message}</p>
+                        <p>Please check your phone for the SMS verification code.</p>
+                    `;
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Failed to Request Code</h3><p>${data.detail || 'Unknown error'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Phone code request error:', error);
+                const resultDiv = document.getElementById('phoneVerificationResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        async function verifyPhoneCode() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            const phoneNumberId = document.getElementById('phoneIdForVerification').value;
+            const otpCode = document.getElementById('otpCode').value;
+            
+            if (!phoneNumberId || !otpCode) {
+                alert('Please enter both phone number ID and verification code');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/phone/verify-code-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        phone_number_id: phoneNumberId,
+                        otp_code: otpCode
+                    })
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('phoneVerificationResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Phone Number Verified!</h3>
+                        <p>${data.message}</p>
+                        <p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>
+                    `;
+                    
+                    // Mark step as completed
+                    document.getElementById('step5').classList.add('completed');
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Verification Failed</h3><p>${data.detail || 'Invalid verification code'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Phone verification error:', error);
+                const resultDiv = document.getElementById('phoneVerificationResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+        
+        async function sendTestMessage() {
+            if (!authToken) {
+                alert('Please log in first');
+                return;
+            }
+            
+            const recipient = document.getElementById('testRecipient').value;
+            const message = document.getElementById('testMessage').value;
+            
+            if (!recipient || !message) {
+                alert('Please enter both recipient phone number and message');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whatsapp/test-messaging-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        recipient_phone: recipient,
+                        test_message: message
+                    })
+                });
+                
+                const data = await response.json();
+                const resultDiv = document.getElementById('testMessageResult');
+                
+                if (response.ok) {
+                    resultDiv.className = 'status-card success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Test Message Sent!</h3>
+                        <p>${data.message}</p>
+                        <p><strong>Recipient:</strong> ${data.recipient}</p>
+                        <p><strong>Message ID:</strong> ${data.message_id}</p>
+                        <p><strong>Phone Number ID:</strong> ${data.phone_number_id}</p>
+                    `;
+                    
+                    // Mark step as completed
+                    document.getElementById('step6').classList.add('completed');
+                } else {
+                    resultDiv.className = 'status-card error';
+                    resultDiv.innerHTML = `<h3>❌ Failed to Send Message</h3><p>${data.detail || 'Unknown error'}</p>`;
+                }
+                
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Test message error:', error);
+                const resultDiv = document.getElementById('testMessageResult');
+                resultDiv.className = 'status-card error';
+                resultDiv.innerHTML = `<h3>❌ Error</h3><p>${error.message}</p>`;
+                resultDiv.classList.remove('hidden');
+            }
+        }
+    </script>
+</body>
+</html> 

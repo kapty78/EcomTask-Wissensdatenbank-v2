@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Status Monitor</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; cursor: pointer; }
+        #status { margin-top: 20px; padding: 10px; background: #f0f0f0; white-space: pre-wrap; }
+        #logs { margin-top: 20px; height: 300px; overflow-y: auto; background: #f8f8f8; padding: 10px; border: 1px solid #ddd; white-space: pre-wrap; }
+        .progress { height: 20px; background: #e0e0e0; margin-top: 10px; }
+        .progress-bar { height: 100%; background: #007bff; width: 0%; transition: width 0.3s; }
+        .status-debugging-box { margin-top: 20px; padding: 10px; background: #f0f0f0; border: 1px solid #ddd; }
+        .manual-log { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Status Monitor</h1>
+    
+    <div>
+        <label for="request-id">Request ID:</label>
+        <input type="text" id="request-id" value="test-123456789">
+        <button id="monitor-button">Überwachen</button>
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    
+    <div id="status">Status: Bereit</div>
+    
+    <div class="status-debugging-box">
+        <h3>Debug-Informationen:</h3>
+        <div>
+            <button id="manual-status-button">Manuell Status abrufen</button>
+            <button id="stop-button" style="background-color: #dc3545;">Überwachung stoppen</button>
+        </div>
+        <div class="manual-log">
+            <label for="log-message">Log-Nachricht hinzufügen:</label>
+            <input type="text" id="log-message" style="width: 60%;" placeholder="Eine Nachricht...">
+            <button id="add-log-button">Hinzufügen</button>
+        </div>
+        <div class="manual-log">
+            <label for="progress-stage">Fortschrittsphase:</label>
+            <select id="progress-stage">
+                <option value="extraction">Extraktion</option>
+                <option value="chunking">Chunking</option>
+                <option value="facts">Faktenextraktion</option>
+                <option value="embedding">Embedding</option>
+                <option value="saving">Speichern</option>
+                <option value="complete">Abgeschlossen</option>
+            </select>
+            <label for="progress-percent">Prozent:</label>
+            <input type="number" id="progress-percent" min="0" max="100" value="50" style="width: 60px;">
+            <button id="update-progress-button">Fortschritt aktualisieren</button>
+        </div>
+    </div>
+    
+    <h3>Logs:</h3>
+    <div id="logs"></div>
+    
+    <script>
+        let monitorInterval;
+        
+        document.getElementById('monitor-button').addEventListener('click', () => {
+            const requestId = document.getElementById('request-id').value;
+            
+            if (!requestId) {
+                alert('Bitte Request ID eingeben!');
+                return;
+            }
+            
+            // Vorherigen Monitor stoppen, falls vorhanden
+            if (monitorInterval) {
+                clearInterval(monitorInterval);
+            }
+            
+            const statusDiv = document.getElementById('status');
+            const logsDiv = document.getElementById('logs');
+            const progressBar = document.getElementById('progress-bar');
+            
+            statusDiv.textContent = 'Status: Überwachung gestartet...';
+            logsDiv.textContent = '';
+            
+            monitorInterval = setInterval(async () => {
+                await checkStatus(requestId, statusDiv, logsDiv, progressBar);
+            }, 1000);
+        });
+        
+        document.getElementById('stop-button').addEventListener('click', () => {
+            if (monitorInterval) {
+                clearInterval(monitorInterval);
+                document.getElementById('status').textContent += '\n(Überwachung beendet)';
+            }
+        });
+        
+        document.getElementById('manual-status-button').addEventListener('click', async () => {
+            const requestId = document.getElementById('request-id').value;
+            if (!requestId) {
+                alert('Bitte Request ID eingeben!');
+                return;
+            }
+            
+            const statusDiv = document.getElementById('status');
+            const logsDiv = document.getElementById('logs');
+            const progressBar = document.getElementById('progress-bar');
+            
+            await checkStatus(requestId, statusDiv, logsDiv, progressBar);
+        });
+        
+        document.getElementById('add-log-button').addEventListener('click', async () => {
+            const requestId = document.getElementById('request-id').value;
+            const logMessage = document.getElementById('log-message').value;
+            
+            if (!requestId || !logMessage) {
+                alert('Request ID und Log-Nachricht sind erforderlich!');
+                return;
+            }
+            
+            try {
+                // Manuell ein Log hinzufügen
+                await fetch(`/api/knowledge/upload-status/add-log?requestId=${requestId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: logMessage })
+                });
+                
+                document.getElementById('log-message').value = '';
+                
+                // Status sofort aktualisieren
+                const statusDiv = document.getElementById('status');
+                const logsDiv = document.getElementById('logs');
+                const progressBar = document.getElementById('progress-bar');
+                
+                await checkStatus(requestId, statusDiv, logsDiv, progressBar);
+            } catch (error) {
+                console.error('Error adding log:', error);
+            }
+        });
+        
+        document.getElementById('update-progress-button').addEventListener('click', async () => {
+            const requestId = document.getElementById('request-id').value;
+            const stage = document.getElementById('progress-stage').value;
+            const percentComplete = parseInt(document.getElementById('progress-percent').value, 10);
+            
+            if (!requestId || isNaN(percentComplete)) {
+                alert('Request ID und gültiger Prozentwert sind erforderlich!');
+                return;
+            }
+            
+            try {
+                // Manuell den Fortschritt aktualisieren
+                await fetch(`/api/knowledge/upload-status/update-progress?requestId=${requestId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        stage,
+                        percentComplete,
+                        message: `Manuell gesetzt: ${stage} bei ${percentComplete}%`
+                    })
+                });
+                
+                // Status sofort aktualisieren
+                const statusDiv = document.getElementById('status');
+                const logsDiv = document.getElementById('logs');
+                const progressBar = document.getElementById('progress-bar');
+                
+                await checkStatus(requestId, statusDiv, logsDiv, progressBar);
+            } catch (error) {
+                console.error('Error updating progress:', error);
+            }
+        });
+        
+        async function checkStatus(requestId, statusDiv, logsDiv, progressBar) {
+            try {
+                const response = await fetch(`/api/knowledge/upload-status?requestId=${requestId}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+                }
+                
+                const data = await response.json();
+                
+                // Status anzeigen
+                let statusText = `Server-Antwort: ${JSON.stringify(data)}\n\n`;
+                
+                if (data) {
+                    if (data.status === false) {
+                        statusText = `Status: ${data.message || 'Kein Status gefunden'}\n`;
+                        progressBar.style.width = '0%';
+                    } else if (data.progress) {
+                        const progress = data.progress.percentComplete || 0;
+                        progressBar.style.width = `${progress}%`;
+                        
+                        statusText = `Status: ${data.completed ? 'Abgeschlossen' : 'Läuft'}\n`;
+                        statusText += `Phase: ${data.progress.stage} (${progress}%)\n`;
+                        statusText += `Nachricht: ${data.progress.message || 'Keine Nachricht'}\n`;
+                        
+                        if (data.progress.currentItem && data.progress.totalItems) {
+                            statusText += `Fortschritt: ${data.progress.currentItem}/${data.progress.totalItems}\n`;
+                        }
+                        
+                        if (data.completed && data.result) {
+                            statusText += `\nErgebnis: ${JSON.stringify(data.result, null, 2)}\n`;
+                        }
+                    }
+                    
+                    // Logs anzeigen, wenn vorhanden
+                    if (data.logs && data.logs.length > 0) {
+                        logsDiv.textContent = data.logs.join('\n');
+                        // Zum Ende scrollen
+                        logsDiv.scrollTop = logsDiv.scrollHeight;
+                    }
+                    
+                    // Überwachung stoppen, wenn fertig
+                    if (data.completed && monitorInterval) {
+                        clearInterval(monitorInterval);
+                        statusText += '\n(Überwachung beendet)';
+                    }
+                }
+                
+                statusDiv.textContent = statusText;
+            } catch (error) {
+                statusDiv.textContent = `Status: Fehler bei der Statusabfrage: ${error.message}`;
+                console.error('Status check error:', error);
+            }
+        }
+    </script>
+</body>
+</html> 

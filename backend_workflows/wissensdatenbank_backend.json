@@ -1,0 +1,1643 @@
+{
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "backend/upload/wissensdatenbank",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -1856,
+          1968
+        ],
+        "id": "7a7b001f-2b98-4f16-9aff-037f35ca07e0",
+        "name": "Webhook Upload",
+        "webhookId": "97e231fd-855a-4327-81df-da786a85cd3b"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// KONFIGURATION\n// ============================================\nconst CONFIG = {\n  CALLBACK_URL: 'https://wissensdatenbank.ecomtask.de/api/cursor/n8n-callback',\n  EMBEDDING_MODEL: 'text-embedding-3-small',\n  LLM_MODEL: 'gpt-4.1-nano',\n  MAX_RETRIES: 3\n};\n\nconst webhook = $input.first().json;\nconst document = webhook.body.document;\nconst options = webhook.body.options;\n\nreturn [{\n  json: {\n    config: CONFIG,\n    document,\n    options,\n    startTime: Date.now(),\n    isRegenerate: false\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1264,
+          1968
+        ],
+        "id": "da494e4a-cfcf-4ace-a674-cab1ed04a6c2",
+        "name": "Init Config & Validate"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.config.CALLBACK_URL }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"documentId\": \"{{ $json.document.id }}\",\n  \"event\": \"processing_started\",\n  \"progress\": 5,\n  \"message\": \"Verarbeitung gestartet\"\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -960,
+          1968
+        ],
+        "id": "7b94d749-8fb8-458f-b9a4-644588e32233",
+        "name": "Callback: Started",
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "operation": "getAll",
+          "tableId": "document_chunks",
+          "returnAll": true,
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "document_id",
+                "condition": "eq",
+                "keyValue": "={{ $('Init Config & Validate').item.json.document.id }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.supabase",
+        "typeVersion": 1,
+        "position": [
+          -656,
+          1968
+        ],
+        "id": "644dc138-c482-4515-9ce0-ebde91e364b3",
+        "name": "Get Chunks",
+        "credentials": {
+          "supabaseApi": {
+            "id": "UpGqlYeH8UZ1zgx2",
+            "name": "Supabase account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Chunks mit Metadaten anreichern\nconst initData = $('Init Config & Validate').first().json;\nconst chunks = $input.all();\n\nreturn chunks.map((chunk, index) => ({\n  json: {\n    ...chunk.json,\n    chunkIndex: index,\n    totalChunks: chunks.length,\n    config: initData.config,\n    document: initData.document,\n    options: initData.options,\n    startTime: initData.startTime\n  }\n}));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -368,
+          1968
+        ],
+        "id": "ee9b6b0e-cd2c-4b72-afea-15c019aa3db2",
+        "name": "Enrich Chunks"
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          -64,
+          1968
+        ],
+        "id": "760c0943-4280-421a-b18c-d3b968e9dd19",
+        "name": "Process Chunks (Batch 5)"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "={{ $json.config.LLM_MODEL }}",
+            "mode": "id"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "Du bist ein hochpräziser Wissens-Extraktions-Spezialist für Vektordatenbanken. Deine Aufgabe ist es, aus Text atomare deutsche Fakten zu extrahieren UND passende deutsche Suchanfragen zu generieren.",
+                "role": "system"
+              },
+              {
+                "content": "Analysiere den folgenden Text und extrahiere alle relevanten Fakten.\n\n## REGELN FÜR FAKTEN:\n1. Jeder Fakt maximal 20 Wörter\n2. Jeder Fakt enthält genau EINE Information\n3. Format: SUBJEKT – PRÄDIKAT – OBJEKT\n4. Nur explizit im Text stehende Informationen\n5. Keine Interpretationen oder Ableitungen\n\n## REGELN FÜR FRAGEN:\n1. 1-3 natürliche Suchanfragen pro Fakt\n2. Wie würde ein User diese Information suchen?\n3. Variiere zwischen W-Fragen und Stichwort-Suchen\n\n## FACT_TYPES (wähle passend):\n- Unternehmen, Produkt, Service, Preis\n- Öffnungszeiten, Kontakt, Adresse, Standort\n- Prozess, Anleitung, FAQ, Policy\n- Person, Team, Eigenschaft, Funktion\n\n## OUTPUT FORMAT (JSON):\n{\n  \"results\": [\n    {\n      \"fact\": \"[Atomarer Fakt]\",\n      \"fact_type\": \"[Kategorie]\",\n      \"questions\": [\"Frage 1?\", \"Frage 2?\"],\n      \"keywords\": [\"keyword1\", \"keyword2\"],\n      \"importance\": 1-5\n    }\n  ]\n}\n\nWICHTIG: Extrahiere ALLE relevanten Fakten. Qualität > Quantität."
+              },
+              {
+                "content": "={{ $json.content }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "jsonOutput": true,
+          "options": {
+            "maxTokens": 10000,
+            "temperature": 0.15
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          192,
+          1968
+        ],
+        "id": "b0916210-7bc6-4b4f-a5f0-03cbcf646f9b",
+        "name": "Extract Facts + Questions",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "openAiApi": {
+            "id": "e17bjF80IKZQVSIA",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const chunkData = $('Process Chunks (Batch 5)').first().json;\n\n// 1) Input robust holen (Array vs Objekt)\nlet llmRaw = $input.first().json;\nconst llmResponse = Array.isArray(llmRaw) ? llmRaw[0] : llmRaw;\n\n// 2) Content holen\nconst content = llmResponse?.choices?.[0]?.message?.content;\n\nlet results = [];\ntry {\n  if (!content) throw new Error(\"No content in LLM response\");\n\n  // 3) content ist JSON-String -> parsen\n  const parsed = typeof content === \"string\" ? JSON.parse(content) : content;\n\n  // 4) results extrahieren\n  if (parsed?.results && Array.isArray(parsed.results)) {\n    results = parsed.results;\n  } else if (Array.isArray(parsed)) {\n    results = parsed;\n  } else {\n    throw new Error(\"Parsed content has no results array\");\n  }\n} catch (e) {\n  console.error(\"Parse error:\", e);\n  console.error(\"Raw content (start):\", String(content).slice(0, 300));\n  return [];\n}\n\n// Validierung & Anreicherung\nconst validFacts = results\n  .filter(r => r?.fact && r.fact.length > 5 && r.fact.length < 500)\n  .map((fact) => ({\n    fact: fact.fact.trim(),\n    fact_type: fact.fact_type || 'Allgemein',\n    questions: Array.isArray(fact.questions) ? fact.questions : [fact.questions || ''],\n    keywords: Array.isArray(fact.keywords) ? fact.keywords : [],\n    importance: Math.min(5, Math.max(1, fact.importance || 3)),\n    chunk_id: chunkData.id,\n    chunk_index: chunkData.chunkIndex,\n    document_id: chunkData.document.id,\n    knowledge_base_id: chunkData.document.knowledge_base_id,\n    user_id: chunkData.document.user_id,\n    company_id: chunkData.document.company_id || null,\n    source_name: chunkData.document.file_name,\n    source_type: chunkData.options?.source_type || 'document',\n    config: chunkData.config,\n    estimated_tokens: Math.ceil(fact.fact.length / 3.5),\n  }));\n\nreturn validFacts.map(f => ({ json: f }));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          592,
+          1968
+        ],
+        "id": "2a6f55ae-91bd-45c4-aad6-91547467fa48",
+        "name": "Parse & Validate Facts"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Batch-Embedding für alle Fakten eines Chunks\nconst facts = $input.all().map(i => i.json);\n\nif (facts.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\n// Sammle alle Texte für Batch-Embedding\nconst factTexts = facts.map(f => f.fact);\nconst questionTexts = facts.flatMap(f => f.questions.filter(q => q && q.length > 0));\n\n// Alle Texte zusammen für einen Batch-Request\nconst allTexts = [...factTexts, ...questionTexts];\n\nreturn [{\n  json: {\n    facts,\n    factTexts,\n    questionTexts,\n    allTexts,\n    factCount: factTexts.length,\n    questionCount: questionTexts.length,\n    config: facts[0]?.config\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          832,
+          1968
+        ],
+        "id": "37e01f9b-aea4-4dc9-9ea2-037f324848f9",
+        "name": "Prepare Batch Embedding"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "skip-check",
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1152,
+          1968
+        ],
+        "id": "5e2761d2-7b6f-4a48-8ed5-72709fe6a5ea",
+        "name": "Has Facts?"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/embeddings",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.config.EMBEDDING_MODEL }}\",\n  \"input\": {{ JSON.stringify($json.allTexts) }}\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1440,
+          1872
+        ],
+        "id": "725a754b-2111-4fb5-ace4-7f60f3b8ce35",
+        "name": "Batch Embeddings (OpenAI)",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 3000,
+        "credentials": {
+          "openAiApi": {
+            "id": "e17bjF80IKZQVSIA",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Embeddings den Fakten zuordnen\nconst prepData = $('Prepare Batch Embedding').first().json;\nconst embedResponse = $input.first().json;\n\nconst embeddings = embedResponse.data.map(d => d.embedding);\nconst facts = prepData.facts;\nconst factCount = prepData.factCount;\n\n// Fact embeddings sind die ersten N\nconst factEmbeddings = embeddings.slice(0, factCount);\n\n// Question embeddings sind der Rest\nconst questionEmbeddings = embeddings.slice(factCount);\n\n// Zuordnung der Question-Embeddings zu den Fakten\nlet questionIdx = 0;\nconst enrichedFacts = facts.map((fact, factIdx) => {\n  const validQuestions = fact.questions.filter(q => q && q.length > 0);\n  const qEmbeddings = validQuestions.map(() => {\n    return questionEmbeddings[questionIdx++] || null;\n  });\n  \n  // Hauptfrage (erste) als question_embedding speichern\n  const primaryQuestionEmbedding = qEmbeddings[0] || factEmbeddings[factIdx];\n  \n  return {\n    ...fact,\n    openai_embedding: factEmbeddings[factIdx],\n    question_embedding: primaryQuestionEmbedding,\n    question: validQuestions[0] || '',\n    all_questions: validQuestions,\n    all_question_embeddings: qEmbeddings,\n    tokens: fact.estimated_tokens,\n    processed_at: new Date().toISOString()\n  };\n});\n\nreturn enrichedFacts.map(f => ({ json: f }));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1744,
+          1872
+        ],
+        "id": "e502ca53-14f8-41d7-ab73-e25b3447d6ee",
+        "name": "Assign Embeddings"
+      },
+      {
+        "parameters": {
+          "tableId": "knowledge_items",
+          "fieldsUi": {
+            "fieldValues": [
+              {
+                "fieldId": "knowledge_base_id",
+                "fieldValue": "={{ $json.knowledge_base_id }}"
+              },
+              {
+                "fieldId": "user_id",
+                "fieldValue": "={{ $json.user_id }}"
+              },
+              {
+                "fieldId": "company_id",
+                "fieldValue": "={{ $json.company_id }}"
+              },
+              {
+                "fieldId": "document_id",
+                "fieldValue": "={{ $json.document_id }}"
+              },
+              {
+                "fieldId": "source_chunk",
+                "fieldValue": "={{ $json.chunk_id }}"
+              },
+              {
+                "fieldId": "source_type",
+                "fieldValue": "={{ $json.source_type }}"
+              },
+              {
+                "fieldId": "source_name",
+                "fieldValue": "={{ $json.source_name }}"
+              },
+              {
+                "fieldId": "content",
+                "fieldValue": "={{ $json.fact }}"
+              },
+              {
+                "fieldId": "fact_type",
+                "fieldValue": "={{ $json.fact_type }}"
+              },
+              {
+                "fieldId": "question",
+                "fieldValue": "={{ $json.question }}"
+              },
+              {
+                "fieldId": "openai_embedding",
+                "fieldValue": "={{ $json.openai_embedding }}"
+              },
+              {
+                "fieldId": "question_embedding",
+                "fieldValue": "={{ $json.question_embedding }}"
+              },
+              {
+                "fieldId": "tokens",
+                "fieldValue": "={{ $json.tokens }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.supabase",
+        "typeVersion": 1,
+        "position": [
+          2048,
+          1872
+        ],
+        "id": "5fce6aaa-e4a6-4d0f-bb3f-9b5fa72f345e",
+        "name": "Insert Knowledge Items",
+        "credentials": {
+          "supabaseApi": {
+            "id": "UpGqlYeH8UZ1zgx2",
+            "name": "Supabase account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Zähle eingefügte Fakten für Progress\nconst facts = $input.all();\nreturn [{ json: { count: facts.length } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2352,
+          1872
+        ],
+        "id": "8cfdcbad-b71b-42ee-8885-549190de8fa0",
+        "name": "Count Inserted"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Progress-Update berechnen\nconst chunkData = $('Process Chunks (Batch 5)').first().json;\nconst insertResult = $input.first().json;\n\nconst progress = Math.round(((chunkData.chunkIndex + 1) / chunkData.totalChunks) * 80) + 15;\n\nreturn [{\n  json: {\n    documentId: chunkData.document.id,\n    chunkIndex: chunkData.chunkIndex,\n    totalChunks: chunkData.totalChunks,\n    factsInserted: insertResult.count || 1,\n    progress,\n    config: chunkData.config\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          1872
+        ],
+        "id": "5701123f-9c25-488e-a122-e4c30d9212a2",
+        "name": "Calculate Progress"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.config.CALLBACK_URL }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"documentId\": \"{{ $json.documentId }}\",\n  \"event\": \"facts_progress\",\n  \"progress\": {{ $json.progress }},\n  \"message\": \"Chunk {{ $json.chunkIndex + 1 }}/{{ $json.totalChunks }} verarbeitet ({{ $json.factsInserted }} Fakten)\"\n}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2944,
+          1872
+        ],
+        "id": "41a9bfb0-fe1a-4f28-8e91-cd3a263e6e9a",
+        "name": "Callback: Progress",
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "jsCode": "// Zurück zum Batch-Loop\nreturn $input.all();"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3248,
+          1872
+        ],
+        "id": "54426be1-3147-4718-babc-67db2c8a4fa9",
+        "name": "Continue Loop"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $('Init Config & Validate').first().json.config.CALLBACK_URL }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"documentId\": \"{{ $('Init Config & Validate').first().json.document.id }}\",\n  \"event\": \"completed\",\n  \"success\": true,\n  \"progress\": 100,\n  \"message\": \"Verarbeitung erfolgreich abgeschlossen\",\n  \"stats\": {\n    \"processingTime\": {{ Date.now() - $('Init Config & Validate').first().json.startTime }},\n    \"chunksProcessed\": {{ $('Get Chunks').all().length }}\n  }\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          240,
+          1760
+        ],
+        "id": "43bc74d5-12d1-48ce-98a3-723d1e4eb4bb",
+        "name": "Callback: Completed",
+        "executeOnce": true,
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "operation": "delete",
+          "tableId": "knowledge_items",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "document_id",
+                "condition": "eq",
+                "keyValue": "={{ $('Init Config & Validate').first().json.document.id }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.supabase",
+        "typeVersion": 1,
+        "position": [
+          -800,
+          1968
+        ],
+        "id": "d1e2f3a4-b5c6-7890-def0-123456789abc",
+        "name": "Delete Existing Knowledge Items",
+        "continueOnFail": true,
+        "credentials": {
+          "supabaseApi": {
+            "id": "UpGqlYeH8UZ1zgx2",
+            "name": "Supabase account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook Upload": {
+        "main": [
+          [
+            {
+              "node": "Init Config & Validate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Init Config & Validate": {
+        "main": [
+          [
+            {
+              "node": "Callback: Started",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Callback: Started": {
+        "main": [
+          [
+            {
+              "node": "Delete Existing Knowledge Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Delete Existing Knowledge Items": {
+        "main": [
+          [
+            {
+              "node": "Get Chunks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Chunks": {
+        "main": [
+          [
+            {
+              "node": "Enrich Chunks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Enrich Chunks": {
+        "main": [
+          [
+            {
+              "node": "Process Chunks (Batch 5)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Chunks (Batch 5)": {
+        "main": [
+          [
+            {
+              "node": "Callback: Completed",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Extract Facts + Questions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Facts + Questions": {
+        "main": [
+          [
+            {
+              "node": "Parse & Validate Facts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse & Validate Facts": {
+        "main": [
+          [
+            {
+              "node": "Prepare Batch Embedding",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Batch Embedding": {
+        "main": [
+          [
+            {
+              "node": "Has Facts?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Facts?": {
+        "main": [
+          [
+            {
+              "node": "Batch Embeddings (OpenAI)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Continue Loop",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Batch Embeddings (OpenAI)": {
+        "main": [
+          [
+            {
+              "node": "Assign Embeddings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Assign Embeddings": {
+        "main": [
+          [
+            {
+              "node": "Insert Knowledge Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Insert Knowledge Items": {
+        "main": [
+          [
+            {
+              "node": "Count Inserted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Count Inserted": {
+        "main": [
+          [
+            {
+              "node": "Calculate Progress",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Calculate Progress": {
+        "main": [
+          [
+            {
+              "node": "Callback: Progress",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Callback: Progress": {
+        "main": [
+          [
+            {
+              "node": "Continue Loop",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Continue Loop": {
+        "main": [
+          [
+            {
+              "node": "Process Chunks (Batch 5)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {
+      "Webhook Upload": [
+        {
+          "headers": {
+            "x-vercel-id": "fra1::jjqs9-1771597691429-afd839205dcb",
+            "x-request-start": "1771597697657963",
+            "x-invocation-id": "fra1::jjqs9-1771597691429-afd839205dcb",
+            "x-forwarded-proto": "https",
+            "x-forwarded-for": "98.91.180.181, 172.70.34.14",
+            "true-client-ip": "98.91.180.181",
+            "sec-fetch-mode": "cors",
+            "rndr-id": "ae063586-c25a-4317",
+            "render-proxy-ttl": "4",
+            "content-type": "application/json",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-ray": "9d0eb088ba94ef61-IAD",
+            "cf-ipcountry": "US",
+            "cf-connecting-ip": "98.91.180.181",
+            "cdn-loop": "cloudflare; loops=1",
+            "accept-language": "*",
+            "accept-encoding": "gzip, br",
+            "accept": "*/*",
+            "content-length": "1072",
+            "user-agent": "node",
+            "host": "ecomtask-automation-35ix:5678",
+            "connection": "close"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "document": {
+              "id": "f4171281-af51-4418-875b-47bb803ce5fb",
+              "title": "Herstellersupport-Kontaktdaten für ECOM.pdf",
+              "file_name": "Herstellersupport-Kontaktdaten für ECOM.pdf",
+              "file_type": "application/pdf",
+              "file_size": 86373,
+              "storage_url": "https://datenbank.ecomtask.de/storage/v1/object/public/documents/uploads_test/ff78d98e-4ed9-422f-b273-d79c4e4836a4.pdf",
+              "company_id": "5a2f733b-f5a2-4e56-9359-9484f6ac9e71",
+              "knowledge_base_id": "600f01cc-53fb-4f09-8ba6-3f52fdd95097",
+              "user_id": "8d73e3ed-8b6f-495d-a680-4bbeda7af785"
+            },
+            "chunks": [
+              {
+                "id": "c44540b3-607b-4738-b254-67c03dcbf90b",
+                "position": 0
+              },
+              {
+                "id": "f545cac8-bb36-4702-825a-cccc6b5bf013",
+                "position": 1
+              },
+              {
+                "id": "d0053854-8ab9-4304-9f62-84b3071bbcdb",
+                "position": 2
+              },
+              {
+                "id": "b25a9bb5-0241-40fd-9cd4-8c13ca18f31e",
+                "position": 3
+              },
+              {
+                "id": "db76d578-cd23-4a81-843a-e54f3c21fbb2",
+                "position": 4
+              },
+              {
+                "id": "4f3f0923-1817-44e6-b443-78bb35c76767",
+                "position": 5
+              },
+              {
+                "id": "83efb228-29ed-491f-a1a2-3afa15e7c758",
+                "position": 6
+              }
+            ],
+            "options": {
+              "language": "de",
+              "max_facts_per_chunk": 20,
+              "create_embeddings": true,
+              "embedding_provider": "openai",
+              "source_type": "document"
+            }
+          },
+          "webhookUrl": "https://automation.ecomtask.de/webhook/backend/upload/wissensdatenbank",
+          "executionMode": "production"
+        }
+      ],
+      "Extract Facts + Questions": [
+        {
+          "id": "chatcmpl-DBMTGUG8MYaLxxugZfOuQRXbxwRKA",
+          "object": "chat.completion",
+          "created": 1771600358,
+          "model": "gpt-4.1-nano-2025-04-14",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": {
+                  "results": [
+                    {
+                      "fact": "3M befindet sich an der Carl-Schurz-Straße 1 in Neuss.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist 3M in Deutschland?",
+                        "3M Adresse in Neuss?",
+                        "Wo befindet sich 3M?"
+                      ],
+                      "keywords": [
+                        "3M",
+                        "Neuss",
+                        "Adresse"
+                      ],
+                      "importance": 5
+                    },
+                    {
+                      "fact": "3M Telefonnummer ist 49 02131 14 0.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Wie ist die Telefonnummer von 3M?",
+                        "3M Kontakt in Deutschland?",
+                        "3M Telefonnummer?"
+                      ],
+                      "keywords": [
+                        "3M",
+                        "Telefon",
+                        "Kontakt"
+                      ],
+                      "importance": 4
+                    },
+                    {
+                      "fact": "3M Webseite ist https://www.3mdeutschland.de/Innovation.de@3M.com.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Was ist die Webseite von 3M?",
+                        "3M Webseite?",
+                        "3M Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "3M",
+                        "Webseite"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Absen befindet sich in Hessenring 4C in Mörfelden-Walldorf.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Absen in Deutschland?",
+                        "Absen Adresse?",
+                        "Absen Standort?"
+                      ],
+                      "keywords": [
+                        "Absen",
+                        "Mörfelden-Walldorf",
+                        "Adresse"
+                      ],
+                      "importance": 4
+                    },
+                    {
+                      "fact": "Absen Telefonnummer ist 06105 7189410.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Absen Telefonnummer?",
+                        "Wie kontaktiere ich Absen?",
+                        "Absen Kontakt?"
+                      ],
+                      "keywords": [
+                        "Absen",
+                        "Telefon"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Absen Webseite ist https://www.absen-europe.com/europe@absen.com.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Absen Webseite?",
+                        "Wo ist die Webseite von Absen?",
+                        "Absen Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Absen",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Acer befindet sich in Kornkamp 4 in Ahrensburg.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Acer in Deutschland?",
+                        "Acer Adresse?",
+                        "Acer Standort?"
+                      ],
+                      "keywords": [
+                        "Acer",
+                        "Ahrensburg",
+                        "Adresse"
+                      ],
+                      "importance": 4
+                    },
+                    {
+                      "fact": "Acer Telefonnummer ist 49 04102 7069 111.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Acer Telefonnummer?",
+                        "Wie kontaktiere ich Acer?",
+                        "Acer Kontakt?"
+                      ],
+                      "keywords": [
+                        "Acer",
+                        "Telefon"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Acer Webseite ist https://www.acer.de.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Acer Webseite?",
+                        "Wo ist die Webseite von Acer?",
+                        "Acer Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Acer",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Aiptek befindet sich in Halskestr. 13 in Willich.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Aiptek in Deutschland?",
+                        "Aiptek Adresse?",
+                        "Aiptek Standort?"
+                      ],
+                      "keywords": [
+                        "Aiptek",
+                        "Willich",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Aiptek Telefonnummer ist 49 2154 92 35 500.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Aiptek Telefonnummer?",
+                        "Wie kontaktiere ich Aiptek?",
+                        "Aiptek Kontakt?"
+                      ],
+                      "keywords": [
+                        "Aiptek",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Aiptek Webseite ist https://www.aiptek.de.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Aiptek Webseite?",
+                        "Wo ist die Webseite von Aiptek?",
+                        "Aiptek Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Aiptek",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AiroDoctor befindet sich in Köthener Str. 8 in Raguhn-Jessnitz.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist AiroDoctor in Deutschland?",
+                        "AiroDoctor Adresse?",
+                        "AiroDoctor Standort?"
+                      ],
+                      "keywords": [
+                        "AiroDoctor",
+                        "Raguhn-Jessnitz",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "AiroDoctor Telefonnummer ist 49 30 39886850.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "AiroDoctor Telefonnummer?",
+                        "Wie kontaktiere ich AiroDoctor?",
+                        "AiroDoctor Kontakt?"
+                      ],
+                      "keywords": [
+                        "AiroDoctor",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AiroDoctor Webseite ist https://airodoctor.com/de/kontakt.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "AiroDoctor Webseite?",
+                        "Wo ist die Webseite von AiroDoctor?",
+                        "AiroDoctor Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "AiroDoctor",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Airtame befindet sich in Danneskiold-Samsøes Allé 24 in Kopenhagen.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Airtame in Dänemark?",
+                        "Airtame Adresse?",
+                        "Airtame Standort?"
+                      ],
+                      "keywords": [
+                        "Airtame",
+                        "Kopenhagen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Airtame Webseite ist https://airtame.com/de/support.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Airtame Webseite?",
+                        "Wo ist die Webseite von Airtame?",
+                        "Airtame Supportseite?"
+                      ],
+                      "keywords": [
+                        "Airtame",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Amaran befindet sich in De Strubbenweg 15 in Almere.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Amaran in den Niederlanden?",
+                        "Amaran Adresse?",
+                        "Amaran Standort?"
+                      ],
+                      "keywords": [
+                        "Amaran",
+                        "Almere",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Amaran Webseite ist https://www.aputure.com/info.eu.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Amaran Webseite?",
+                        "Wo ist die Webseite von Amaran?",
+                        "Amaran Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Amaran",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AOpen befindet sich in Stadionlaan 151-153 in Rosmalen.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist AOpen in den Niederlanden?",
+                        "AOpen Adresse?",
+                        "AOpen Standort?"
+                      ],
+                      "keywords": [
+                        "AOpen",
+                        "Rosmalen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "AOpen Telefonnummer ist 31 73 646 6400.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "AOpen Telefonnummer?",
+                        "Wie kontaktiere ich AOpen?",
+                        "AOpen Kontakt?"
+                      ],
+                      "keywords": [
+                        "AOpen",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Apart Audio befindet sich in Industriepark Brechtsebaan 8 in Schoten.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Apart Audio in Belgien?",
+                        "Apart Audio Adresse?",
+                        "Apart Audio Standort?"
+                      ],
+                      "keywords": [
+                        "Apart Audio",
+                        "Schoten",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Apart Audio Telefonnummer ist 32 3 448 01 60.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Apart Audio Telefonnummer?",
+                        "Wie kontaktiere ich Apart Audio?",
+                        "Apart Audio Kontakt?"
+                      ],
+                      "keywords": [
+                        "Apart Audio",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "APC befindet sich in Gothaer Str. 29 in Ratingen.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist APC in Deutschland?",
+                        "APC Adresse?",
+                        "APC Standort?"
+                      ],
+                      "keywords": [
+                        "APC",
+                        "Ratingen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "APC Telefonnummer ist 0800 – 101 00 67.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "APC Telefonnummer?",
+                        "Wie kontaktiere ich APC?",
+                        "APC Kontakt?"
+                      ],
+                      "keywords": [
+                        "APC",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Apple befindet sich in Hollyhill Industrial Estate, Cork, Irland.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Apple in Irland?",
+                        "Apple Adresse?",
+                        "Apple Standort?"
+                      ],
+                      "keywords": [
+                        "Apple",
+                        "Cork",
+                        "Adresse"
+                      ],
+                      "importance": 4
+                    },
+                    {
+                      "fact": "Apple Telefonnummer ist 0800 6645451.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Apple Telefonnummer?",
+                        "Wie kontaktiere ich Apple?",
+                        "Apple Kontakt?"
+                      ],
+                      "keywords": [
+                        "Apple",
+                        "Telefon"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Aputure befindet sich in De Strubbenweg 15 in Almere.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Aputure in den Niederlanden?",
+                        "Aputure Adresse?",
+                        "Aputure Standort?"
+                      ],
+                      "keywords": [
+                        "Aputure",
+                        "Almere",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Aputure Webseite ist https://www.aputure.com/info.eu.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Aputure Webseite?",
+                        "Wo ist die Webseite von Aputure?",
+                        "Aputure Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Aputure",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Artiteq befindet sich in Herastraat 39 in Tilburg.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Artiteq in den Niederlanden?",
+                        "Artiteq Adresse?",
+                        "Artiteq Standort?"
+                      ],
+                      "keywords": [
+                        "Artiteq",
+                        "Tilburg",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Artiteq Telefonnummer ist 31(0)13-5729070.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Artiteq Telefonnummer?",
+                        "Wie kontaktiere ich Artiteq?",
+                        "Artiteq Kontakt?"
+                      ],
+                      "keywords": [
+                        "Artiteq",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Asus befindet sich in Harkortstraße 21-23 in Ratingen.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Asus in Deutschland?",
+                        "Asus Adresse?",
+                        "Asus Standort?"
+                      ],
+                      "keywords": [
+                        "Asus",
+                        "Ratingen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Asus Telefonnummer ist 49 02102 5789 557.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Asus Telefonnummer?",
+                        "Wie kontaktiere ich Asus?",
+                        "Asus Kontakt?"
+                      ],
+                      "keywords": [
+                        "Asus",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Atlona befindet sich in Ringstrasse 15a in Dübendorf, Schweiz.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Atlona in der Schweiz?",
+                        "Atlona Adresse?",
+                        "Atlona Standort?"
+                      ],
+                      "keywords": [
+                        "Atlona",
+                        "Dübendorf",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Atlona Telefonnummer ist 41 432108110.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Atlona Telefonnummer?",
+                        "Wie kontaktiere ich Atlona?",
+                        "Atlona Kontakt?"
+                      ],
+                      "keywords": [
+                        "Atlona",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Atomos befindet sich in Im Petersfeld 6b in Altendiez.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Atomos in Deutschland?",
+                        "Atomos Adresse?",
+                        "Atomos Standort?"
+                      ],
+                      "keywords": [
+                        "Atomos",
+                        "Altendiez",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Atomos Telefonnummer ist 06432 9787700.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Atomos Telefonnummer?",
+                        "Wie kontaktiere ich Atomos?",
+                        "Atomos Kontakt?"
+                      ],
+                      "keywords": [
+                        "Atomos",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AUDAC befindet sich in Kolmenstraat 149 in Hasselt, Belgien.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist AUDAC in Belgien?",
+                        "AUDAC Adresse?",
+                        "AUDAC Standort?"
+                      ],
+                      "keywords": [
+                        "AUDAC",
+                        "Hasselt",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "AUDAC Telefonnummer ist 32 11 27 55 66.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "AUDAC Telefonnummer?",
+                        "Wie kontaktiere ich AUDAC?",
+                        "AUDAC Kontakt?"
+                      ],
+                      "keywords": [
+                        "AUDAC",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AUDEMO-SYSTEMS befindet sich in Schatzbogen 62 in München.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist AUDEMO-SYSTEMS in Deutschland?",
+                        "AUDEMO-SYSTEMS Adresse?",
+                        "AUDEMO-SYSTEMS Standort?"
+                      ],
+                      "keywords": [
+                        "AUDEMO-SYSTEMS",
+                        "München",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "AUDEMO-SYSTEMS Telefonnummer ist 49 089 4 56 78 47-0.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "AUDEMO-SYSTEMS Telefonnummer?",
+                        "Wie kontaktiere ich AUDEMO-SYSTEMS?",
+                        "AUDEMO-SYSTEMS Kontakt?"
+                      ],
+                      "keywords": [
+                        "AUDEMO-SYSTEMS",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Audinate befindet sich in Middle St BN1 1AL, Brighton, Vereinigtes Königreich.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Audinate in Großbritannien?",
+                        "Audinate Adresse?",
+                        "Audinate Standort?"
+                      ],
+                      "keywords": [
+                        "Audinate",
+                        "Brighton",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Audinate Telefonnummer ist 44 (0) 1273 921695.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Audinate Telefonnummer?",
+                        "Wie kontaktiere ich Audinate?",
+                        "Audinate Kontakt?"
+                      ],
+                      "keywords": [
+                        "Audinate",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Audiolab befindet sich in Korschenbroich, Johann-Georg-Halske-Str. 11.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Audiolab in Deutschland?",
+                        "Audiolab Adresse?",
+                        "Audiolab Standort?"
+                      ],
+                      "keywords": [
+                        "Audiolab",
+                        "Korschenbroich",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Audiolab Telefonnummer ist 49(0)2161 61783 0.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Audiolab Telefonnummer?",
+                        "Wie kontaktiere ich Audiolab?",
+                        "Audiolab Kontakt?"
+                      ],
+                      "keywords": [
+                        "Audiolab",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Autocue befindet sich in Parkring 29 in Garching.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Autocue in Deutschland?",
+                        "Autocue Adresse?",
+                        "Autocue Standort?"
+                      ],
+                      "keywords": [
+                        "Autocue",
+                        "Garching",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Autocue Telefonnummer ist 49 (0) 89 32158-200.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Autocue Telefonnummer?",
+                        "Wie kontaktiere ich Autocue?",
+                        "Autocue Kontakt?"
+                      ],
+                      "keywords": [
+                        "Autocue",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "AVer befindet sich in Waddinxveen, Distributieweg 13.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist AVer in den Niederlanden?",
+                        "AVer Adresse?",
+                        "AVer Standort?"
+                      ],
+                      "keywords": [
+                        "AVer",
+                        "Waddinxveen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "AVer Telefonnummer ist 31 010 7600 550.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "AVer Telefonnummer?",
+                        "Wie kontaktiere ich AVer?",
+                        "AVer Kontakt?"
+                      ],
+                      "keywords": [
+                        "AVer",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "B&W befindet sich in Kleine Heide 12 in Halle Westfalia.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist B&W in Deutschland?",
+                        "B&W Adresse?",
+                        "B&W Standort?"
+                      ],
+                      "keywords": [
+                        "B&W",
+                        "Halle Westfalia",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "B&W Telefonnummer ist 49 05201 87170.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "B&W Telefonnummer?",
+                        "Wie kontaktiere ich B&W?",
+                        "B&W Kontakt?"
+                      ],
+                      "keywords": [
+                        "B&W",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Bandito befindet sich in Waldstr. 21 in Wehringen.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Bandito in Deutschland?",
+                        "Bandito Adresse?",
+                        "Bandito Standort?"
+                      ],
+                      "keywords": [
+                        "Bandito",
+                        "Wehringen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Bandito Telefonnummer ist 49 08234 904930.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Bandito Telefonnummer?",
+                        "Wie kontaktiere ich Bandito?",
+                        "Bandito Kontakt?"
+                      ],
+                      "keywords": [
+                        "Bandito",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Barco befindet sich in Greschbachstrasse 5a in Karlsruhe.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Barco in Deutschland?",
+                        "Barco Adresse?",
+                        "Barco Standort?"
+                      ],
+                      "keywords": [
+                        "Barco",
+                        "Karlsruhe",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Barco Telefonnummer ist 49 0721 6201 0.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Barco Telefonnummer?",
+                        "Wie kontaktiere ich Barco?",
+                        "Barco Kontakt?"
+                      ],
+                      "keywords": [
+                        "Barco",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Belkin befindet sich in Otto-Hahn-Straße 20 in Aschheim.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Belkin in Deutschland?",
+                        "Belkin Adresse?",
+                        "Belkin Standort?"
+                      ],
+                      "keywords": [
+                        "Belkin",
+                        "Aschheim",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Belkin Telefonnummer ist 49 89 143405 0.",
+                      "fact_type": "Kontakt",
+                      "questions": [
+                        "Belkin Telefonnummer?",
+                        "Wie kontaktiere ich Belkin?",
+                        "Belkin Kontakt?"
+                      ],
+                      "keywords": [
+                        "Belkin",
+                        "Telefon"
+                      ],
+                      "importance": 2
+                    },
+                    {
+                      "fact": "Bellrobot befindet sich in South BLK, Yuanxing Technology, Shenzhen, China.",
+                      "fact_type": "Adresse",
+                      "questions": [
+                        "Wo ist Bellrobot in China?",
+                        "Bellrobot Adresse?",
+                        "Bellrobot Standort?"
+                      ],
+                      "keywords": [
+                        "Bellrobot",
+                        "Shenzhen",
+                        "Adresse"
+                      ],
+                      "importance": 3
+                    },
+                    {
+                      "fact": "Bellrobot Webseite ist https://www.bellrobot.com/de/.",
+                      "fact_type": "Webseite",
+                      "questions": [
+                        "Bellrobot Webseite?",
+                        "Wo ist die Webseite von Bellrobot?",
+                        "Bellrobot Kontaktseite?"
+                      ],
+                      "keywords": [
+                        "Bellrobot",
+                        "Webseite"
+                      ],
+                      "importance": 2
+                    }
+                  ]
+                },
+                "refusal": null,
+                "annotations": []
+              },
+              "logprobs": null,
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 1533,
+            "completion_tokens": 4657,
+            "total_tokens": 6190,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "service_tier": "default",
+          "system_fingerprint": "fp_336de151a4"
+        }
+      ]
+    },
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "instanceId": "a947345aecb0b9369a225bdcd776aa30f2d6dde315668c612fe2da333d84af9a"
+    }
+  }
