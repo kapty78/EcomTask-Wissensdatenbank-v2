@@ -30,6 +30,7 @@ export const CreateKnowledgeBaseModal: FC<CreateKnowledgeBaseModalProps> = ({
   const supabase = createClientComponentClient<Database>()
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [language, setLanguage] = useState("de")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,8 +50,8 @@ export const CreateKnowledgeBaseModal: FC<CreateKnowledgeBaseModalProps> = ({
         .insert({
           user_id: userId,
           name: name.trim(),
-          description: description.trim() || null // Set to null if empty
-          // sharing defaults to 'private' in DB schema
+          description: description.trim() || null,
+          language
         })
         .select() // Select the newly created row
         .single() // Expect a single row back
@@ -78,6 +79,7 @@ export const CreateKnowledgeBaseModal: FC<CreateKnowledgeBaseModalProps> = ({
     // Reset form state on close
     setName("")
     setDescription("")
+    setLanguage("de")
     setError(null)
     setLoading(false)
     onClose()
@@ -145,6 +147,31 @@ export const CreateKnowledgeBaseModal: FC<CreateKnowledgeBaseModalProps> = ({
               className="w-full rounded-md border border-[#333333] bg-[#252525]/30 p-2.5 text-sm text-white transition-all placeholder:text-gray-500 focus:border-pink-500/50 focus:outline-none focus:ring-1 focus:ring-pink-500/50"
               disabled={loading}
             />
+          </div>
+
+          <div>
+            <label
+              htmlFor="kb-language"
+              className="mb-1.5 block text-sm font-medium text-gray-200"
+            >
+              Sprache der Wissensdatenbank
+            </label>
+            <select
+              id="kb-language"
+              value={language}
+              onChange={e => setLanguage(e.target.value)}
+              className="w-full rounded-md border border-[#333333] bg-[#252525]/30 p-2.5 text-sm text-white transition-all focus:border-pink-500/50 focus:outline-none focus:ring-1 focus:ring-pink-500/50"
+              disabled={loading}
+            >
+              <option value="de">Deutsch</option>
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="it">Italiano</option>
+              <option value="nl">Nederlands</option>
+              <option value="pl">Polski</option>
+              <option value="pt">Português</option>
+            </select>
           </div>
 
           {error && (
