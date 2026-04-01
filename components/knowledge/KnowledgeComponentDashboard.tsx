@@ -4458,14 +4458,7 @@ export default function KnowledgeComponentDashboard() {
                           </div>
                         </div>
 
-                        <div>
-                          <button
-                            onClick={handleCreateNew}
-                            className="w-full rounded-lg border border-primary/55 bg-primary px-4 py-2.5 text-sm text-foreground font-medium hover:bg-pink-600 transition-colors"
-                          >
-                            + Neue Datenbank
-                          </button>
-                        </div>
+                        {/* Create button is now inside KnowledgeBaseList */}
                       </div>
 
                       {/* Mobile: Show selected KB name when collapsed */}
@@ -4970,14 +4963,6 @@ export default function KnowledgeComponentDashboard() {
           <div className="text-xs text-muted-foreground mt-1">{uploadProgress}% abgeschlossen</div>
         </div>
       )}
-
-      {/* ✅ NEU: Create Knowledge Base Modal */}
-      <CreateKnowledgeBaseModal
-        userId={user?.id || ''}
-        isOpen={isCreateModalOpen}
-        onClose={handleCreateModalClose}
-        onKnowledgeBaseCreated={handleKnowledgeBaseCreated}
-      />
 
       {/* ✅ NEU: KI-Summary Modal mit Side-by-Side Vergleich */}
       {showSummaryModal && aiSummaryResult && (

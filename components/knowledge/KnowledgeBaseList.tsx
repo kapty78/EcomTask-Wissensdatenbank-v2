@@ -448,7 +448,16 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
       </button>
       */}
 
-      {/* Inline creation replaces the modal */}
+      {/* Create button */}
+      {!isCreating && (
+        <button
+          onClick={handleCreateNew}
+          className="w-full rounded-lg border border-primary/55 bg-primary px-4 py-2.5 text-sm text-foreground font-medium hover:bg-pink-600 transition-colors"
+          disabled={loading}
+        >
+          + Neue Datenbank
+        </button>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && kbToDeleteId && (
