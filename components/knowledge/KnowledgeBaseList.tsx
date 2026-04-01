@@ -5,7 +5,7 @@ import { createPortal } from "react-dom"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { Database } from "@/supabase/types"
 import type { Tables } from "@/supabase/types"; // Import Tables from the correct path
-import { CreateKnowledgeBaseModal } from "./CreateKnowledgeBaseModal" // Import the modal component
+// Inline creation replaces the old CreateKnowledgeBaseModal
 import { isRLSError, handleRLSError } from "@/lib/rls-error-handler"
 import {
   Database as DatabaseIcon,
@@ -70,7 +70,11 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false) // State for modal visibility
+  const [isCreating, setIsCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [newLanguage, setNewLanguage] = useState("de")
+  const [createLoading, setCreateLoading] = useState(false)
+  const nameInputRef = React.useRef<HTMLInputElement>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [kbToDeleteId, setKbToDeleteId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -134,15 +138,55 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
   }, [externalNewKb, onExternalNewKbProcessed])
 
   const handleCreateNew = () => {
-    setIsModalOpen(true)
+    setIsCreating(true)
+    setNewName("")
+    setNewLanguage("de")
+    setTimeout(() => nameInputRef.current?.focus(), 50)
   }
 
-  const handleCloseModal = () => {
-    setIsModalOpen(false)
+  const handleCancelCreate = () => {
+    setIsCreating(false)
+    setNewName("")
+    setNewLanguage("de")
   }
 
-  const handleKnowledgeBaseCreated = (newKb: KnowledgeBase) => {
-    setKnowledgeBases(prevKbs => [newKb, ...prevKbs])
+  const handleConfirmCreate = async () => {
+    if (!newName.trim()) return
+
+    setCreateLoading(true)
+    try {
+      const { data, error: insertError } = await supabase
+        .from("knowledge_bases")
+        .insert({
+          user_id: userId,
+          name: newName.trim(),
+          language: newLanguage,
+        })
+        .select()
+        .single()
+
+      if (insertError) throw insertError
+      if (data) {
+        setKnowledgeBases(prevKbs => [data, ...prevKbs])
+        setIsCreating(false)
+        setNewName("")
+        setNewLanguage("de")
+        onSelectKnowledgeBase(data.id)
+      }
+    } catch (err: any) {
+      setError(`Fehler: ${err.message}`)
+    } finally {
+      setCreateLoading(false)
+    }
+  }
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && newName.trim()) {
+      e.preventDefault()
+      handleConfirmCreate()
+    } else if (e.key === "Escape") {
+      handleCancelCreate()
+    }
   }
 
   const handleDeleteClick = (id: string, name: string, e: React.MouseEvent) => {
@@ -298,6 +342,54 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
         </div>
       )}
 
+      {/* Inline create row */}
+      {isCreating && (
+        <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-2.5 space-y-2">
+          <input
+            ref={nameInputRef}
+            type="text"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={handleCreateKeyDown}
+            placeholder="Name der Wissensdatenbank..."
+            className="w-full rounded-md border border-[#333] bg-[#252525]/30 px-2.5 py-1.5 text-sm text-white placeholder:text-gray-500 focus:border-pink-500/50 focus:outline-none focus:ring-1 focus:ring-pink-500/50"
+            disabled={createLoading}
+            autoFocus
+          />
+          <div className="flex items-center gap-2">
+            <select
+              value={newLanguage}
+              onChange={e => setNewLanguage(e.target.value)}
+              className="flex-1 rounded-md border border-[#333] bg-[#252525]/30 px-2 py-1.5 text-xs text-white focus:border-pink-500/50 focus:outline-none"
+              disabled={createLoading}
+            >
+              <option value="de">Deutsch</option>
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="it">Italiano</option>
+              <option value="nl">Nederlands</option>
+              <option value="pl">Polski</option>
+              <option value="pt">Português</option>
+            </select>
+            <button
+              onClick={handleConfirmCreate}
+              disabled={createLoading || !newName.trim()}
+              className="rounded-md bg-pink-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-pink-600 disabled:opacity-40"
+            >
+              {createLoading ? <Loader2 className="size-3 animate-spin" /> : "Erstellen"}
+            </button>
+            <button
+              onClick={handleCancelCreate}
+              disabled={createLoading}
+              className="rounded-md px-2 py-1.5 text-xs text-gray-400 transition-colors hover:text-white"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {!loading && !error && knowledgeBases.length > 0 && (
         <div className="space-y-1.5">
           {knowledgeBases.map(kb => {
@@ -356,12 +448,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
       </button>
       */}
 
-      <CreateKnowledgeBaseModal
-        userId={userId}
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onKnowledgeBaseCreated={handleKnowledgeBaseCreated}
-      />
+      {/* Inline creation replaces the modal */}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && kbToDeleteId && (
