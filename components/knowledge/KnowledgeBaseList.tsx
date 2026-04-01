@@ -242,7 +242,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
 
       {/* Inline create */}
       {isCreating && (
-        <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1.5">
+        <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
           <KnowledgeStackIcon isSelected={false} />
           <input
             ref={createInputRef}
@@ -251,7 +251,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
             onChange={e => setNewName(e.target.value)}
             onKeyDown={handleCreateKeyDown}
             placeholder="Name..."
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-white placeholder:text-gray-500 focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-white placeholder:text-gray-500 focus:outline-none"
             disabled={createLoading}
             autoFocus
           />
@@ -303,8 +303,10 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
             // ── DELETE CONFIRM ROW ──
             if (isDeleting) {
               return (
-                <div key={kb.id} className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-1.5">
-                  <Trash2 className="size-3 flex-shrink-0 text-red-400" />
+                <div key={kb.id} className="flex items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-2">
+                  <span className="relative inline-flex size-4 flex-shrink-0 items-center justify-center">
+                    <Trash2 className="size-3 text-red-400" />
+                  </span>
                   <input
                     ref={deleteInputRef}
                     type="text"
@@ -312,7 +314,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
                     onChange={e => setDeleteConfirm(e.target.value)}
                     onKeyDown={handleDeleteKeyDown}
                     placeholder={`"${kb.name}" eingeben`}
-                    className="min-w-0 flex-1 bg-transparent text-[12px] text-white placeholder:text-gray-500 focus:outline-none"
+                    className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-white placeholder:text-gray-500 focus:outline-none"
                     disabled={deleteLoading}
                     autoFocus
                   />
@@ -335,7 +337,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
             // ── RENAME ROW ──
             if (isRenaming) {
               return (
-                <div key={kb.id} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1.5">
+                <div key={kb.id} className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
                   <KnowledgeStackIcon isSelected={true} />
                   <input
                     ref={renameInputRef}
@@ -343,7 +345,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
                     value={renameValue}
                     onChange={e => setRenameValue(e.target.value)}
                     onKeyDown={handleRenameKeyDown}
-                    className="min-w-0 flex-1 bg-transparent text-[13px] text-white focus:outline-none"
+                    className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-white focus:outline-none"
                     disabled={renameLoading}
                     autoFocus
                   />
