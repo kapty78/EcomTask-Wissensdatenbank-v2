@@ -17,7 +17,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Trash2,
-  Pencil
+  Pencil,
+  X
 } from "lucide-react"
 
 // Define the type for a knowledge base item based on your DB schema
