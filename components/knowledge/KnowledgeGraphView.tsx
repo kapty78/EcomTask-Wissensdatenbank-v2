@@ -661,58 +661,251 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
         )}
       </div>
 
-      {/* Detail panel */}
+      {/* Detail panel — Mini radial graph */}
       <AnimatePresence>
         {selectedNodeUI && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
+            animate={{ height: 220, opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="border-t border-white/[0.06] bg-[#1e1e1e] overflow-hidden"
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="border-t border-white/[0.06] bg-[#1e1e1e] overflow-hidden relative"
           >
-            <div className="px-4 py-3">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getColor(selectedNodeUI.type) }} />
-                  <span className="text-sm font-semibold text-white">{selectedNodeUI.label}</span>
-                  <span className="text-[10px] uppercase tracking-wider text-white/25 bg-white/[0.04] px-1.5 py-0.5 rounded">
-                    {TYPE_LABELS[selectedNodeUI.type] || selectedNodeUI.type}
-                  </span>
-                </div>
-                <button onClick={() => { selectedRef.current = null; setSelectedNodeUI(null) }} className="p-1 rounded hover:bg-white/5 transition-colors">
-                  <X className="size-3.5 text-white/30" />
-                </button>
-              </div>
-              {selectedNodeUI.description && (
-                <p className="text-xs text-white/40 mb-2">{selectedNodeUI.description}</p>
-              )}
-              {connectedEdges.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {connectedEdges.slice(0, 10).map((edge) => {
-                    const s = typeof edge.source === "string" ? edge.source : (edge.source as any).id
-                    const isSource = s === selectedNodeUI.id
-                    const otherId = isSource
-                      ? (typeof edge.target === "string" ? edge.target : (edge.target as any).id)
-                      : s
-                    const otherNode = graphData?.nodes.find((n) => n.id === otherId)
-                    return (
-                      <div key={edge.id} className="flex items-center gap-1 text-[10px] bg-white/[0.03] rounded px-2 py-1 border border-white/[0.04]">
-                        <span className="text-primary/60">{edge.type}</span>
-                        <span className="text-white/15">&rarr;</span>
-                        <span className="text-white/50">{otherNode?.label || "?"}</span>
-                      </div>
-                    )
-                  })}
-                  {connectedEdges.length > 10 && (
-                    <span className="text-[10px] text-white/20 px-2 py-1">+{connectedEdges.length - 10} weitere</span>
-                  )}
-                </div>
-              )}
-            </div>
+            <button
+              onClick={() => { selectedRef.current = null; setSelectedNodeUI(null) }}
+              className="absolute top-2 right-2 z-10 p-1 rounded hover:bg-white/5 transition-colors"
+            >
+              <X className="size-3.5 text-white/30" />
+            </button>
+            <MiniRadialGraph
+              centerNode={selectedNodeUI}
+              edges={connectedEdges}
+              allNodes={graphData?.nodes || []}
+            />
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+// --- Mini Radial Graph (detail panel) ---
+
+function MiniRadialGraph({
+  centerNode,
+  edges,
+  allNodes,
+}: {
+  centerNode: GraphNode
+  edges: GraphEdge[]
+  allNodes: GraphNode[]
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const animRef = useRef<number>(0)
+  const hoveredRef = useRef<string | null>(null)
+  const [hoveredLabel, setHoveredLabel] = useState<{ x: number; y: number; node: GraphNode; edgeType: string } | null>(null)
+
+  const nodeMap = new Map<string, GraphNode>()
+  allNodes.forEach((n) => nodeMap.set(n.id, n))
+
+  // Collect neighbor nodes
+  const neighbors: Array<{ node: GraphNode; edgeType: string }> = []
+  const seen = new Set<string>()
+  for (const edge of edges) {
+    const s = typeof edge.source === "string" ? edge.source : (edge.source as any).id
+    const t = typeof edge.target === "string" ? edge.target : (edge.target as any).id
+    const otherId = s === centerNode.id ? t : s
+    if (seen.has(otherId)) continue
+    seen.add(otherId)
+    const otherNode = nodeMap.get(otherId)
+    if (otherNode) {
+      neighbors.push({ node: otherNode, edgeType: edge.type })
+    }
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const container = containerRef.current
+    if (!canvas || !container) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    const rect = container.getBoundingClientRect()
+    const w = rect.width, h = rect.height
+    canvas.width = w * dpr
+    canvas.height = h * dpr
+    canvas.style.width = `${w}px`
+    canvas.style.height = `${h}px`
+
+    const cx = w / 2, cy = h / 2
+    const orbitR = Math.min(w, h) * 0.32
+    const centerR = 12
+    const nodeR = 7
+
+    // Precompute neighbor positions
+    const positions = neighbors.map((_, i) => {
+      const angle = (i / neighbors.length) * Math.PI * 2 - Math.PI / 2
+      return {
+        x: cx + Math.cos(angle) * orbitR,
+        y: cy + Math.sin(angle) * orbitR,
+      }
+    })
+
+    let phase = 0
+
+    function draw() {
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx!.clearRect(0, 0, w, h)
+
+      phase += 0.01
+      const hovered = hoveredRef.current
+
+      // Edges — animated pulse
+      for (let i = 0; i < neighbors.length; i++) {
+        const pos = positions[i]
+        const isHov = hovered === neighbors[i].node.id
+        const color = getColor(neighbors[i].node.type)
+        const [r, g, b] = hexToRgb(color)
+
+        // Edge line
+        ctx!.beginPath()
+        ctx!.moveTo(cx, cy)
+        ctx!.lineTo(pos.x, pos.y)
+        ctx!.strokeStyle = isHov
+          ? `rgba(${r},${g},${b}, 0.5)`
+          : `rgba(255,255,255, 0.06)`
+        ctx!.lineWidth = isHov ? 1.5 : 0.8
+        ctx!.stroke()
+
+        // Animated pulse dot on edge
+        const pulseT = ((phase + i * 0.3) % 1)
+        const px = cx + (pos.x - cx) * pulseT
+        const py = cy + (pos.y - cy) * pulseT
+        ctx!.beginPath()
+        ctx!.arc(px, py, 1.5, 0, Math.PI * 2)
+        ctx!.fillStyle = `rgba(${r},${g},${b}, ${0.6 * (1 - pulseT)})`
+        ctx!.fill()
+
+        // Edge label
+        if (isHov) {
+          const mx = (cx + pos.x) / 2, my = (cy + pos.y) / 2
+          ctx!.font = "500 9px Inter, system-ui, sans-serif"
+          ctx!.textAlign = "center"
+          ctx!.fillStyle = `rgba(${r},${g},${b}, 0.6)`
+          ctx!.fillText(neighbors[i].edgeType, mx, my - 6)
+        }
+      }
+
+      // Neighbor nodes
+      for (let i = 0; i < neighbors.length; i++) {
+        const pos = positions[i]
+        const nb = neighbors[i]
+        const color = getColor(nb.node.type)
+        const [r, g, b] = hexToRgb(color)
+        const isHov = hovered === nb.node.id
+
+        // Glow
+        if (isHov) {
+          const glow = ctx!.createRadialGradient(pos.x, pos.y, nodeR * 0.3, pos.x, pos.y, nodeR * 3)
+          glow.addColorStop(0, `rgba(${r},${g},${b}, 0.3)`)
+          glow.addColorStop(1, `rgba(${r},${g},${b}, 0)`)
+          ctx!.fillStyle = glow
+          ctx!.beginPath()
+          ctx!.arc(pos.x, pos.y, nodeR * 3, 0, Math.PI * 2)
+          ctx!.fill()
+        }
+
+        ctx!.beginPath()
+        ctx!.arc(pos.x, pos.y, nodeR, 0, Math.PI * 2)
+        ctx!.fillStyle = `rgba(${r},${g},${b}, ${isHov ? 0.95 : 0.7})`
+        ctx!.fill()
+
+        // Label
+        ctx!.font = `${isHov ? 600 : 400} 9px Inter, system-ui, sans-serif`
+        ctx!.textAlign = "center"
+        ctx!.textBaseline = "top"
+        const labelY = pos.y + nodeR + 4
+
+        const metrics = ctx!.measureText(nb.node.label)
+        ctx!.fillStyle = "rgba(30,30,30,0.85)"
+        ctx!.fillRect(pos.x - metrics.width / 2 - 2, labelY - 1, metrics.width + 4, 12)
+
+        ctx!.fillStyle = isHov ? "#ffffff" : "rgba(255,255,255,0.55)"
+        ctx!.fillText(nb.node.label, pos.x, labelY)
+      }
+
+      // Center node — glow
+      const cc = getColor(centerNode.type)
+      const [cr, cg, cb] = hexToRgb(cc)
+      const centerGlow = ctx!.createRadialGradient(cx, cy, centerR * 0.3, cx, cy, centerR * 3.5)
+      centerGlow.addColorStop(0, `rgba(${cr},${cg},${cb}, 0.25)`)
+      centerGlow.addColorStop(1, `rgba(${cr},${cg},${cb}, 0)`)
+      ctx!.fillStyle = centerGlow
+      ctx!.beginPath()
+      ctx!.arc(cx, cy, centerR * 3.5, 0, Math.PI * 2)
+      ctx!.fill()
+
+      // Center circle
+      ctx!.beginPath()
+      ctx!.arc(cx, cy, centerR, 0, Math.PI * 2)
+      ctx!.fillStyle = `rgba(${cr},${cg},${cb}, 0.9)`
+      ctx!.fill()
+      ctx!.strokeStyle = "#ffffff"
+      ctx!.lineWidth = 2
+      ctx!.stroke()
+
+      // Center label
+      ctx!.font = "600 11px Inter, system-ui, sans-serif"
+      ctx!.textAlign = "center"
+      ctx!.textBaseline = "top"
+      const clY = cy + centerR + 5
+      const clMetrics = ctx!.measureText(centerNode.label)
+      ctx!.fillStyle = "rgba(30,30,30,0.85)"
+      ctx!.fillRect(cx - clMetrics.width / 2 - 3, clY - 1, clMetrics.width + 6, 14)
+      ctx!.fillStyle = "#ffffff"
+      ctx!.fillText(centerNode.label, cx, clY)
+
+      // Type label below name
+      ctx!.font = "400 8px Inter, system-ui, sans-serif"
+      ctx!.fillStyle = "rgba(255,255,255,0.3)"
+      ctx!.fillText(TYPE_LABELS[centerNode.type] || centerNode.type, cx, clY + 14)
+
+      animRef.current = requestAnimationFrame(draw)
+    }
+
+    animRef.current = requestAnimationFrame(draw)
+
+    // Hover detection
+    function handleMouseMove(e: MouseEvent) {
+      const r = canvas.getBoundingClientRect()
+      const mx = e.clientX - r.left, my = e.clientY - r.top
+
+      let found: string | null = null
+      for (let i = 0; i < neighbors.length; i++) {
+        const pos = positions[i]
+        const dx = mx - pos.x, dy = my - pos.y
+        if (dx * dx + dy * dy <= (nodeR + 4) * (nodeR + 4)) {
+          found = neighbors[i].node.id
+          break
+        }
+      }
+      hoveredRef.current = found
+      canvas.style.cursor = found ? "pointer" : "default"
+    }
+
+    canvas.addEventListener("mousemove", handleMouseMove)
+
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      canvas.removeEventListener("mousemove", handleMouseMove)
+    }
+  }, [centerNode, edges, neighbors])
+
+  return (
+    <div ref={containerRef} className="w-full h-full">
+      <canvas ref={canvasRef} className="w-full h-full" />
     </div>
   )
 }
