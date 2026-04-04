@@ -288,6 +288,55 @@ async function processCallback(body: any) {
 
   console.log(`[server-callback] Updated document ${documentId} status to ${targetStatus} (${targetProgress}%)`)
 
+  // ✅ Knowledge Graph Extraction: Trigger nach erfolgreicher Fakten-Extraktion
+  if (targetStatus === 'completed' && documentId) {
+    const graphBackendUrl = process.env.SUPPORT_BACKEND_URL
+    const graphApiKey = process.env.SUPPORT_BACKEND_API_KEY
+    if (graphBackendUrl && graphApiKey) {
+      try {
+        // Lade company_id und knowledge_base_id für dieses Dokument
+        const { data: doc } = await supabaseAdmin
+          .from('documents')
+          .select('company_id')
+          .eq('id', documentId)
+          .single()
+
+        // knowledge_base_id aus den knowledge_items dieses Dokuments ermitteln
+        const { data: kbItem } = await supabaseAdmin
+          .from('knowledge_items')
+          .select('knowledge_base_id')
+          .eq('document_id', documentId)
+          .limit(1)
+          .maybeSingle()
+
+        const companyId = doc?.company_id
+        const kbId = kbItem?.knowledge_base_id
+
+        if (companyId && kbId) {
+          fetch(`${graphBackendUrl}/api/v1/knowledge/graph-extract`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': graphApiKey,
+            },
+            body: JSON.stringify({
+              knowledge_base_id: kbId,
+              company_id: companyId,
+              document_id: documentId,
+            }),
+          }).catch((err) =>
+            console.error('[Graph] Fire-and-forget graph extraction failed:', err)
+          )
+          console.log(`[server-callback] Graph extraction triggered for document ${documentId}`)
+        } else {
+          console.log(`[server-callback] Skipping graph extraction: missing company_id (${companyId}) or kb_id (${kbId})`)
+        }
+      } catch (err) {
+        console.error('[server-callback] Error triggering graph extraction:', err)
+      }
+    }
+  }
+
   // ✅ NEU: Spezielle Behandlung für Fakten-Regenerierung
   if (event === 'facts_regenerated' || event === 'facts_regeneration_completed') {
     return NextResponse.json({ 
