@@ -39,18 +39,18 @@ interface GraphData {
 // --- Color mapping ---
 
 const TYPE_COLORS: Record<string, string> = {
-  person: "#f472b6",       // pink
-  organization: "#a78bfa", // purple
-  product: "#38bdf8",      // sky blue
-  process: "#34d399",      // emerald
-  location: "#fb923c",     // orange
-  role: "#facc15",         // yellow
-  feature: "#22d3ee",      // cyan
-  rule: "#f87171",         // red
-  step: "#a3e635",         // lime
-  spec: "#818cf8",         // indigo
-  contact: "#e879f9",      // fuchsia
-  definition: "#94a3b8",   // slate
+  person: "#ff55c9",       // primary pink (matches app primary)
+  organization: "#b38bff", // soft purple
+  product: "#5eadff",      // muted blue
+  process: "#4dd6a5",      // soft emerald
+  location: "#f0a56e",     // warm sand
+  role: "#e8c95a",         // muted gold
+  feature: "#5ec6d4",      // teal
+  rule: "#e87474",         // soft coral
+  step: "#8dd45e",         // soft lime
+  spec: "#8b8fff",         // lavender
+  contact: "#d87ef5",      // light fuchsia
+  definition: "#7a8494",   // muted slate
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -181,11 +181,11 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
       ctx.clearRect(0, 0, w, h)
 
       // Background
-      ctx.fillStyle = "#0a0a0f"
+      ctx.fillStyle = "#1a1a1a"
       ctx.fillRect(0, 0, w, h)
 
       // Subtle grid
-      ctx.strokeStyle = "rgba(255,255,255,0.02)"
+      ctx.strokeStyle = "rgba(255,255,255,0.03)"
       ctx.lineWidth = 1
       const gridSize = 40 * t.scale
       const offsetX = t.x % gridSize
@@ -216,8 +216,8 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
         ctx.moveTo(sx, sy)
         ctx.lineTo(tx, ty)
         ctx.strokeStyle = isHighlighted
-          ? `rgba(255, 85, 201, 0.6)`
-          : `rgba(255, 255, 255, 0.08)`
+          ? `rgba(255, 85, 201, 0.4)`
+          : `rgba(255, 255, 255, 0.06)`
         ctx.lineWidth = isHighlighted ? 2 * t.scale : 1 * t.scale
         ctx.stroke()
 
@@ -226,7 +226,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
           const mx = (sx + tx) / 2
           const my = (sy + ty) / 2
           ctx.font = `${10 * t.scale}px Inter, system-ui, sans-serif`
-          ctx.fillStyle = "rgba(255, 85, 201, 0.7)"
+          ctx.fillStyle = "rgba(255, 85, 201, 0.45)"
           ctx.textAlign = "center"
           ctx.fillText(edge.type, mx, my - 4 * t.scale)
         }
@@ -457,7 +457,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
   return (
     <div className="relative flex flex-col w-full h-full overflow-hidden rounded-lg">
       {/* Canvas area */}
-      <div ref={containerRef} className="relative flex-1 min-h-0 bg-[#0a0a0f]">
+      <div ref={containerRef} className="relative flex-1 min-h-0 bg-[#1a1a1a]">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center z-20">
             <div className="flex flex-col items-center gap-3">
@@ -498,7 +498,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
               className="fixed z-50 pointer-events-none"
               style={{ left: tooltipPos.x + 16, top: tooltipPos.y - 10 }}
             >
-              <div className="bg-[#1a1a2e]/95 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 shadow-xl max-w-[240px]">
+              <div className="bg-[#252525]/95 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 shadow-xl max-w-[240px]">
                 <div className="flex items-center gap-2 mb-1">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: getColor(hoveredNode.type) }} />
                   <span className="text-xs font-semibold text-white truncate">{hoveredNode.label}</span>
@@ -516,20 +516,20 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
 
         {/* Zoom controls */}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1 z-10">
-          <button onClick={() => zoom(1.3)} className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 transition-colors" title="Zoom in">
-            <ZoomIn className="size-3.5 text-white/60" />
+          <button onClick={() => zoom(1.3)} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.08] transition-colors backdrop-blur-sm" title="Zoom in">
+            <ZoomIn className="size-3.5 text-white/50" />
           </button>
-          <button onClick={() => zoom(0.7)} className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 transition-colors" title="Zoom out">
-            <ZoomOut className="size-3.5 text-white/60" />
+          <button onClick={() => zoom(0.7)} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.08] transition-colors backdrop-blur-sm" title="Zoom out">
+            <ZoomOut className="size-3.5 text-white/50" />
           </button>
-          <button onClick={resetView} className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 transition-colors" title="Reset">
-            <Maximize2 className="size-3.5 text-white/60" />
+          <button onClick={resetView} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.08] transition-colors backdrop-blur-sm" title="Reset">
+            <Maximize2 className="size-3.5 text-white/50" />
           </button>
         </div>
 
         {/* Stats badge */}
         {graphData && graphData.nodes.length > 0 && (
-          <div className="absolute top-3 left-3 z-10 flex items-center gap-3 bg-[#0a0a0f]/80 backdrop-blur-sm border border-white/5 rounded-lg px-3 py-1.5">
+          <div className="absolute top-3 left-3 z-10 flex items-center gap-3 bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-1.5">
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
               <span className="text-[11px] text-white/50">{graphData.stats.entities} Entities</span>
@@ -541,7 +541,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
 
         {/* Legend */}
         {presentTypes.length > 0 && (
-          <div className="absolute top-3 right-3 z-10 bg-[#0a0a0f]/80 backdrop-blur-sm border border-white/5 rounded-lg px-3 py-2">
+          <div className="absolute top-3 right-3 z-10 bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-2">
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
               {presentTypes.map((type) => (
                 <div key={type} className="flex items-center gap-1.5">
@@ -562,7 +562,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="border-t border-white/5 bg-[#0f0f1a] overflow-hidden"
+            className="border-t border-white/[0.06] bg-[#1e1e1e] overflow-hidden"
           >
             <div className="px-4 py-3">
               <div className="flex items-start justify-between mb-2">
