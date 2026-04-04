@@ -2,31 +2,30 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-  forceX,
-  forceY,
-  SimulationNodeDatum,
-  SimulationLinkDatum,
-} from "d3-force"
-import { Loader2, ZoomIn, ZoomOut, Maximize2, X } from "lucide-react"
+import { Loader2, ZoomIn, ZoomOut, Maximize2, X, RotateCcw } from "lucide-react"
 
 // --- Types ---
 
-interface GraphNode extends SimulationNodeDatum {
+interface GraphNode {
   id: string
   label: string
   type: string
   description: string
   weight: number
+  // 3D spherical coords (set during layout)
+  theta: number // polar angle
+  phi: number   // azimuthal angle
+  // Projected 2D
+  sx: number
+  sy: number
+  sz: number // depth for sorting
+  screenR: number
 }
 
-interface GraphEdge extends SimulationLinkDatum<GraphNode> {
+interface GraphEdge {
   id: string
+  source: string
+  target: string
   type: string
   label: string
   weight: number
@@ -38,7 +37,7 @@ interface GraphData {
   stats: { entities: number; relations: number }
 }
 
-// --- Color mapping (Wissensdatenbank design tokens) ---
+// --- Colors (Wissensdatenbank design) ---
 
 const TYPE_COLORS: Record<string, string> = {
   person: "#ff55c9",
@@ -74,8 +73,59 @@ function getColor(type: string): string {
   return TYPE_COLORS[type] || "#7a8494"
 }
 
-function getNodeRadius(weight: number): number {
-  return Math.max(5, Math.min(18, 3 + (weight || 1) * 2.5))
+function hexToRgb(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return [r, g, b]
+}
+
+// --- Fibonacci sphere for even node distribution ---
+
+function fibonacciSphere(n: number): Array<{ theta: number; phi: number }> {
+  const points: Array<{ theta: number; phi: number }> = []
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (i / (n - 1)) * 2 // -1 to 1
+    const radiusAtY = Math.sqrt(1 - y * y)
+    const theta = Math.acos(y)
+    const phi = goldenAngle * i
+    points.push({ theta, phi })
+  }
+  return points
+}
+
+// --- 3D math ---
+
+function project(
+  theta: number, phi: number, radius: number,
+  rotX: number, rotY: number,
+  cx: number, cy: number, fov: number
+): { x: number; y: number; z: number; scale: number } {
+  // Spherical to cartesian
+  let x = radius * Math.sin(theta) * Math.cos(phi)
+  let y = radius * Math.cos(theta)
+  let z = radius * Math.sin(theta) * Math.sin(phi)
+
+  // Rotate around Y axis
+  const cosY = Math.cos(rotY), sinY = Math.sin(rotY)
+  const x1 = x * cosY - z * sinY
+  const z1 = x * sinY + z * cosY
+
+  // Rotate around X axis
+  const cosX = Math.cos(rotX), sinX = Math.sin(rotX)
+  const y1 = y * cosX - z1 * sinX
+  const z2 = y * sinX + z1 * cosX
+
+  // Perspective projection
+  const perspective = fov / (fov + z2)
+  return {
+    x: cx + x1 * perspective,
+    y: cy + y1 * perspective,
+    z: z2,
+    scale: perspective,
+  }
 }
 
 // --- Component ---
@@ -88,36 +138,31 @@ interface KnowledgeGraphViewProps {
 export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: KnowledgeGraphViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const animFrameRef = useRef<number>(0)
+  const animRef = useRef<number>(0)
 
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // Use refs for interactive state to avoid re-creating the simulation
-  const hoveredNodeRef = useRef<GraphNode | null>(null)
-  const selectedNodeRef = useRef<GraphNode | null>(null)
-  const tooltipRef = useRef<{ x: number; y: number; node: GraphNode | null }>({ x: 0, y: 0, node: null })
-
-  // State only for React UI (detail panel + tooltip)
   const [selectedNodeUI, setSelectedNodeUI] = useState<GraphNode | null>(null)
   const [tooltipUI, setTooltipUI] = useState<{ x: number; y: number; node: GraphNode | null }>({ x: 0, y: 0, node: null })
 
-  // Transform + drag state
-  const transformRef = useRef({ x: 0, y: 0, scale: 1 })
-  const dragRef = useRef<{ active: boolean; node: GraphNode | null; moved: boolean }>({
-    active: false, node: null, moved: false,
-  })
-  const panRef = useRef<{ active: boolean; lastX: number; lastY: number }>({
-    active: false, lastX: 0, lastY: 0,
-  })
-
-  // Keep refs to simulation data
+  // Refs for render loop (no re-renders)
   const nodesRef = useRef<GraphNode[]>([])
   const edgesRef = useRef<GraphEdge[]>([])
-  const simRef = useRef<ReturnType<typeof forceSimulation<GraphNode>> | null>(null)
-  const widthRef = useRef(0)
-  const heightRef = useRef(0)
+  const nodeMapRef = useRef<Map<string, GraphNode>>(new Map())
+  const edgeIndexRef = useRef<Map<string, Set<string>>>(new Map())
+  const selectedRef = useRef<GraphNode | null>(null)
+  const hoveredRef = useRef<GraphNode | null>(null)
+
+  // Camera state
+  const rotRef = useRef({ x: 0.3, y: 0 }) // rotation
+  const autoRotateRef = useRef(true)
+  const radiusRef = useRef(200)
+  const fovRef = useRef(600)
+  const sizeRef = useRef({ w: 0, h: 0 })
+
+  // Drag state
+  const dragRef = useRef({ active: false, lastX: 0, lastY: 0, moved: false })
 
   // Load data
   useEffect(() => {
@@ -128,7 +173,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
       try {
         const res = await fetch(`/api/knowledge/entity-graph?knowledge_base_id=${knowledgeBaseId}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data: GraphData = await res.json()
+        const data = await res.json()
         if (!cancelled) setGraphData(data)
       } catch (err: any) {
         if (!cancelled) setError(err.message)
@@ -140,23 +185,21 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
     return () => { cancelled = true }
   }, [knowledgeBaseId])
 
-  // Hit-test
+  // Find node at screen position
   const findNodeAt = useCallback((mx: number, my: number): GraphNode | null => {
-    const t = transformRef.current
     const nodes = nodesRef.current
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const n = nodes[i]
-      if (n.x == null || n.y == null) continue
-      const sx = n.x * t.scale + t.x
-      const sy = n.y * t.scale + t.y
-      const r = (getNodeRadius(n.weight) + 4) * t.scale
-      const dx = mx - sx, dy = my - sy
-      if (dx * dx + dy * dy <= r * r) return n
+    // Check front-to-back (sorted by z desc = front first)
+    const sorted = [...nodes].sort((a, b) => b.sz - a.sz)
+    for (const n of sorted) {
+      if (n.sz < 0) continue // behind sphere
+      const dx = mx - n.sx, dy = my - n.sy
+      const hitR = Math.max(8, n.screenR + 4)
+      if (dx * dx + dy * dy <= hitR * hitR) return n
     }
     return null
   }, [])
 
-  // Setup simulation + render loop (only depends on graphData)
+  // Setup rendering (only on graphData change)
   useEffect(() => {
     if (!graphData || !canvasRef.current || !containerRef.current) return
     if (graphData.nodes.length === 0) return
@@ -166,57 +209,63 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // Size
-    const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
-    const w = rect.width
-    const h = rect.height
+    const rect = container.getBoundingClientRect()
+    const w = rect.width, h = rect.height
     canvas.width = w * dpr
     canvas.height = h * dpr
     canvas.style.width = `${w}px`
     canvas.style.height = `${h}px`
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    widthRef.current = w
-    heightRef.current = h
+    sizeRef.current = { w, h }
 
-    // Clone data for d3 mutation
-    const nodes: GraphNode[] = graphData.nodes.map((n) => ({ ...n }))
-    const edges: GraphEdge[] = graphData.edges.map((e) => ({ ...e }))
+    // Sphere radius based on viewport
+    const sphereR = Math.min(w, h) * 0.33
+    radiusRef.current = sphereR
+
+    // Distribute nodes on Fibonacci sphere
+    const positions = fibonacciSphere(graphData.nodes.length)
+    const nodes: GraphNode[] = graphData.nodes.map((n, i) => ({
+      ...n,
+      theta: positions[i].theta,
+      phi: positions[i].phi,
+      sx: 0, sy: 0, sz: 0, screenR: 0,
+    }))
+
+    // Sort by weight descending — high-weight nodes get "better" (more spread out) positions
+    const byWeight = [...nodes].sort((a, b) => b.weight - a.weight)
+    const sortedPositions = [...positions]
+    byWeight.forEach((node, i) => {
+      node.theta = sortedPositions[i].theta
+      node.phi = sortedPositions[i].phi
+    })
+
+    const edges: GraphEdge[] = graphData.edges.map((e) => ({ ...e } as GraphEdge))
     nodesRef.current = nodes
     edgesRef.current = edges
 
-    // Center transform
-    transformRef.current = { x: w / 2, y: h / 2, scale: 1 }
+    // Build lookup maps
+    const nodeMap = new Map<string, GraphNode>()
+    nodes.forEach((n) => nodeMap.set(n.id, n))
+    nodeMapRef.current = nodeMap
 
-    // Build edge lookup for fast "isConnected" checks
     const edgeIndex = new Map<string, Set<string>>()
-    for (const e of graphData.edges) {
-      const s = typeof e.source === "string" ? e.source : (e.source as any).id
-      const t = typeof e.target === "string" ? e.target : (e.target as any).id
-      if (!edgeIndex.has(s)) edgeIndex.set(s, new Set())
-      if (!edgeIndex.has(t)) edgeIndex.set(t, new Set())
-      edgeIndex.get(s)!.add(t)
-      edgeIndex.get(t)!.add(s)
+    for (const e of edges) {
+      if (!edgeIndex.has(e.source)) edgeIndex.set(e.source, new Set())
+      if (!edgeIndex.has(e.target)) edgeIndex.set(e.target, new Set())
+      edgeIndex.get(e.source)!.add(e.target)
+      edgeIndex.get(e.target)!.add(e.source)
     }
-
-    // Force simulation — stronger repulsion, spread out nicely
-    const sim = forceSimulation(nodes)
-      .force("link", forceLink<GraphNode, GraphEdge>(edges).id((d) => d.id).distance(140).strength(0.3))
-      .force("charge", forceManyBody().strength(-500).distanceMax(600))
-      .force("center", forceCenter(0, 0).strength(0.05))
-      .force("collide", forceCollide<GraphNode>().radius((d) => getNodeRadius(d.weight) + 12).strength(0.7))
-      .force("x", forceX(0).strength(0.03))
-      .force("y", forceY(0).strength(0.03))
-      .alphaDecay(0.025)
-      .velocityDecay(0.4)
-
-    simRef.current = sim
+    edgeIndexRef.current = edgeIndex
 
     // --- Render ---
     function draw() {
-      const t = transformRef.current
-      const selected = selectedNodeRef.current
-      const hovered = hoveredNodeRef.current
+      const { w, h } = sizeRef.current
+      const rot = rotRef.current
+      const R = radiusRef.current
+      const fov = fovRef.current
+      const cx = w / 2, cy = h / 2
+      const selected = selectedRef.current
+      const hovered = hoveredRef.current
 
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx!.clearRect(0, 0, w, h)
@@ -225,214 +274,237 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
       ctx!.fillStyle = "#1a1a1a"
       ctx!.fillRect(0, 0, w, h)
 
-      // Grid
-      ctx!.strokeStyle = "rgba(255,255,255,0.025)"
-      ctx!.lineWidth = 1
-      const gs = 50 * t.scale
-      if (gs > 8) {
-        const ox = t.x % gs, oy = t.y % gs
-        ctx!.beginPath()
-        for (let x = ox; x < w; x += gs) { ctx!.moveTo(x, 0); ctx!.lineTo(x, h) }
-        for (let y = oy; y < h; y += gs) { ctx!.moveTo(0, y); ctx!.lineTo(w, y) }
-        ctx!.stroke()
+      // Auto-rotate
+      if (autoRotateRef.current && !dragRef.current.active) {
+        rot.y += 0.002
       }
 
-      // --- Edges ---
-      for (const edge of edges) {
-        const src = edge.source as GraphNode
-        const tgt = edge.target as GraphNode
-        if (src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue
+      // Project all nodes
+      for (const node of nodes) {
+        const p = project(node.theta, node.phi, R, rot.x, rot.y, cx, cy, fov)
+        node.sx = p.x
+        node.sy = p.y
+        node.sz = p.z
+        node.screenR = Math.max(2, getNodeRadius(node.weight) * p.scale)
+      }
 
-        const sx = src.x * t.scale + t.x
-        const sy = src.y * t.scale + t.y
-        const tx = tgt.x * t.scale + t.x
-        const ty = tgt.y * t.scale + t.y
+      // Sort by depth (back first)
+      const sorted = [...nodes].sort((a, b) => a.sz - b.sz)
+
+      // Sphere wireframe — subtle equator and meridians
+      drawSphereWireframe(ctx!, cx, cy, R, rot, fov, w, h)
+
+      // Draw edges (back-to-front, only visible ones)
+      for (const edge of edges) {
+        const src = nodeMap.get(edge.source)
+        const tgt = nodeMap.get(edge.target)
+        if (!src || !tgt) continue
+
+        // Both behind? skip
+        const avgZ = (src.sz + tgt.sz) / 2
+        const depthAlpha = Math.max(0, Math.min(1, (avgZ + R) / (2 * R)))
+        if (depthAlpha < 0.05) continue
 
         const highlighted = selected && (src.id === selected.id || tgt.id === selected.id)
 
+        // Draw as curved arc (great circle approximation)
         ctx!.beginPath()
-        ctx!.moveTo(sx, sy)
-        ctx!.lineTo(tx, ty)
-        ctx!.strokeStyle = highlighted ? "rgba(255,85,201,0.35)" : "rgba(255,255,255,0.05)"
-        ctx!.lineWidth = highlighted ? 1.5 * t.scale : 0.5 * t.scale
-        ctx!.stroke()
+        ctx!.moveTo(src.sx, src.sy)
 
-        // Edge label
-        if (highlighted && t.scale > 0.6) {
-          const mx = (sx + tx) / 2, my = (sy + ty) / 2
-          ctx!.font = `${Math.max(8, 9 * t.scale)}px Inter, system-ui, sans-serif`
-          ctx!.textAlign = "center"
-          ctx!.fillStyle = "rgba(255,85,201,0.35)"
-          ctx!.fillText(edge.type, mx, my - 3 * t.scale)
+        // Bezier control point — push outward from center for arc effect
+        const midX = (src.sx + tgt.sx) / 2
+        const midY = (src.sy + tgt.sy) / 2
+        const dx = midX - cx, dy = midY - cy
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const bulge = dist > 10 ? 0.15 : 0
+        const cpx = midX + dx * bulge
+        const cpy = midY + dy * bulge
+
+        ctx!.quadraticCurveTo(cpx, cpy, tgt.sx, tgt.sy)
+
+        if (highlighted) {
+          ctx!.strokeStyle = `rgba(255, 85, 201, ${0.25 * depthAlpha})`
+          ctx!.lineWidth = 1.5
+        } else {
+          ctx!.strokeStyle = `rgba(255, 255, 255, ${0.04 * depthAlpha})`
+          ctx!.lineWidth = 0.5
         }
+        ctx!.stroke()
       }
 
-      // --- Nodes ---
-      for (const node of nodes) {
-        if (node.x == null || node.y == null) continue
-
-        const nx = node.x * t.scale + t.x
-        const ny = node.y * t.scale + t.y
-
-        // Cull off-screen
-        if (nx < -50 || nx > w + 50 || ny < -50 || ny > h + 50) continue
-
-        const baseR = getNodeRadius(node.weight)
-        const r = baseR * t.scale
+      // Draw nodes (back-to-front)
+      for (const node of sorted) {
+        const depthAlpha = Math.max(0.08, Math.min(1, (node.sz + R) / (2 * R)))
+        const r = node.screenR
         const color = getColor(node.type)
+        const [cr, cg, cb] = hexToRgb(color)
 
         const isSel = selected?.id === node.id
         const isHov = hovered?.id === node.id
         const isConn = selected ? edgeIndex.get(selected.id)?.has(node.id) || false : false
         const dimmed = selected && !isSel && !isConn
 
-        // Glow for selected/hovered
-        if ((isSel || isHov) && r > 2) {
-          const glow = ctx!.createRadialGradient(nx, ny, r * 0.3, nx, ny, r * 2.5)
-          glow.addColorStop(0, color + "30")
-          glow.addColorStop(1, color + "00")
+        // Glow for front-facing selected/hovered nodes
+        if ((isSel || isHov) && depthAlpha > 0.4) {
+          const glow = ctx!.createRadialGradient(node.sx, node.sy, r * 0.3, node.sx, node.sy, r * 4)
+          glow.addColorStop(0, `rgba(${cr},${cg},${cb}, ${0.25 * depthAlpha})`)
+          glow.addColorStop(1, `rgba(${cr},${cg},${cb}, 0)`)
           ctx!.fillStyle = glow
           ctx!.beginPath()
-          ctx!.arc(nx, ny, r * 2.5, 0, Math.PI * 2)
+          ctx!.arc(node.sx, node.sy, r * 4, 0, Math.PI * 2)
           ctx!.fill()
         }
 
-        // Circle
+        // Node circle
+        const alpha = dimmed ? 0.12 * depthAlpha : (isSel ? 0.95 : 0.7) * depthAlpha
         ctx!.beginPath()
-        ctx!.arc(nx, ny, r, 0, Math.PI * 2)
-        ctx!.fillStyle = dimmed ? color + "20" : color + (isSel ? "ee" : "aa")
+        ctx!.arc(node.sx, node.sy, r, 0, Math.PI * 2)
+        ctx!.fillStyle = `rgba(${cr},${cg},${cb}, ${alpha})`
         ctx!.fill()
-        if (isSel) {
-          ctx!.strokeStyle = "#ffffff"
-          ctx!.lineWidth = 2 * t.scale
-          ctx!.stroke()
-        } else if (!dimmed) {
-          ctx!.strokeStyle = color + "50"
-          ctx!.lineWidth = 1 * t.scale
+
+        if (isSel && depthAlpha > 0.3) {
+          ctx!.strokeStyle = `rgba(255,255,255, ${0.8 * depthAlpha})`
+          ctx!.lineWidth = 1.5
           ctx!.stroke()
         }
 
-        // Label — only show when zoomed enough or node is active
-        const showLabel = t.scale > 0.55 || isSel || isHov
-        if (showLabel && r > 2) {
-          const fs = Math.max(8, Math.min(12, 10 * t.scale))
+        // Label (only for front-facing, not too small)
+        const showLabel = depthAlpha > 0.5 && r > 3 && (isSel || isHov || (depthAlpha > 0.7 && r > 4))
+        if (showLabel) {
+          const fs = Math.max(8, Math.min(12, 10 * (r / 8)))
           ctx!.font = `${isSel || isHov ? 600 : 400} ${fs}px Inter, system-ui, sans-serif`
           ctx!.textAlign = "center"
           ctx!.textBaseline = "top"
 
-          const labelY = ny + r + 4 * t.scale
+          const labelY = node.sy + r + 4
+          const textAlpha = dimmed ? 0.1 : (isSel ? 0.95 : 0.6) * depthAlpha
 
-          // Shadow
-          ctx!.fillStyle = "#1a1a1a"
+          // Background
           const metrics = ctx!.measureText(node.label)
           const pad = 3
-          ctx!.fillRect(nx - metrics.width / 2 - pad, labelY - 1, metrics.width + pad * 2, fs + 3)
+          ctx!.fillStyle = `rgba(26, 26, 26, ${0.8 * depthAlpha})`
+          ctx!.fillRect(node.sx - metrics.width / 2 - pad, labelY - 1, metrics.width + pad * 2, fs + 3)
 
-          ctx!.fillStyle = dimmed ? "rgba(255,255,255,0.15)" : isSel ? "#ffffff" : "rgba(255,255,255,0.7)"
-          ctx!.fillText(node.label, nx, labelY)
+          ctx!.fillStyle = `rgba(255,255,255, ${textAlpha})`
+          ctx!.fillText(node.label, node.sx, labelY)
         }
       }
 
-      animFrameRef.current = requestAnimationFrame(draw)
+      animRef.current = requestAnimationFrame(draw)
     }
 
-    sim.on("tick", () => {})
-    animFrameRef.current = requestAnimationFrame(draw)
+    function getNodeRadius(weight: number): number {
+      return Math.max(4, Math.min(14, 3 + (weight || 1) * 2))
+    }
+
+    function drawSphereWireframe(
+      ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
+      rot: { x: number; y: number }, fov: number, w: number, h: number
+    ) {
+      ctx.strokeStyle = "rgba(255,255,255,0.025)"
+      ctx.lineWidth = 0.5
+
+      // Equator
+      ctx.beginPath()
+      for (let i = 0; i <= 64; i++) {
+        const angle = (i / 64) * Math.PI * 2
+        const p = project(Math.PI / 2, angle, R, rot.x, rot.y, cx, cy, fov)
+        if (i === 0) ctx.moveTo(p.x, p.y)
+        else ctx.lineTo(p.x, p.y)
+      }
+      ctx.stroke()
+
+      // Two meridians
+      for (const offset of [0, Math.PI / 2]) {
+        ctx.beginPath()
+        for (let i = 0; i <= 64; i++) {
+          const angle = (i / 64) * Math.PI * 2
+          const p = project(angle, offset, R, rot.x, rot.y, cx, cy, fov)
+          if (i === 0) ctx.moveTo(p.x, p.y)
+          else ctx.lineTo(p.x, p.y)
+        }
+        ctx.stroke()
+      }
+
+      // Outer ring (always circular from front)
+      ctx.beginPath()
+      ctx.arc(cx, cy, R * (fov / (fov + 0)), 0, Math.PI * 2)
+      ctx.strokeStyle = "rgba(255,255,255,0.03)"
+      ctx.stroke()
+    }
+
+    animRef.current = requestAnimationFrame(draw)
 
     // --- Mouse handlers ---
     function handleMouseDown(e: MouseEvent) {
       const r = canvas.getBoundingClientRect()
-      const mx = e.clientX - r.left, my = e.clientY - r.top
-      const node = findNodeAt(mx, my)
-
-      if (node) {
-        dragRef.current = { active: true, node, moved: false }
-        node.fx = node.x
-        node.fy = node.y
-        sim.alphaTarget(0.1).restart()
-      } else {
-        panRef.current = { active: true, lastX: mx, lastY: my }
-      }
+      dragRef.current = { active: true, lastX: e.clientX - r.left, lastY: e.clientY - r.top, moved: false }
+      autoRotateRef.current = false
     }
 
     function handleMouseMove(e: MouseEvent) {
       const r = canvas.getBoundingClientRect()
       const mx = e.clientX - r.left, my = e.clientY - r.top
-      const t = transformRef.current
 
-      // Dragging node
-      if (dragRef.current.active && dragRef.current.node) {
-        dragRef.current.moved = true
-        dragRef.current.node.fx = (mx - t.x) / t.scale
-        dragRef.current.node.fy = (my - t.y) / t.scale
-        return
-      }
-
-      // Panning
-      if (panRef.current.active) {
-        t.x += mx - panRef.current.lastX
-        t.y += my - panRef.current.lastY
-        panRef.current.lastX = mx
-        panRef.current.lastY = my
+      if (dragRef.current.active) {
+        const dx = mx - dragRef.current.lastX
+        const dy = my - dragRef.current.lastY
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragRef.current.moved = true
+        rotRef.current.y += dx * 0.005
+        rotRef.current.x += dy * 0.005
+        // Clamp X rotation
+        rotRef.current.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotRef.current.x))
+        dragRef.current.lastX = mx
+        dragRef.current.lastY = my
         canvas.style.cursor = "grabbing"
         return
       }
 
       // Hover
       const node = findNodeAt(mx, my)
-      hoveredNodeRef.current = node
+      hoveredRef.current = node
       canvas.style.cursor = node ? "pointer" : "grab"
 
-      // Throttled tooltip update
       if (node) {
-        tooltipRef.current = { x: e.clientX, y: e.clientY, node }
         setTooltipUI({ x: e.clientX, y: e.clientY, node })
-      } else if (tooltipRef.current.node) {
-        tooltipRef.current = { x: 0, y: 0, node: null }
-        setTooltipUI({ x: 0, y: 0, node: null })
+      } else {
+        setTooltipUI((prev) => prev.node ? { x: 0, y: 0, node: null } : prev)
       }
     }
 
-    function handleMouseUp() {
-      if (dragRef.current.active && dragRef.current.node) {
-        if (!dragRef.current.moved) {
-          // Click — toggle selection
-          const clickedNode = dragRef.current.node
-          if (selectedNodeRef.current?.id === clickedNode.id) {
-            selectedNodeRef.current = null
+    function handleMouseUp(e: MouseEvent) {
+      if (dragRef.current.active && !dragRef.current.moved) {
+        // Click
+        const r = canvas.getBoundingClientRect()
+        const mx = e.clientX - r.left, my = e.clientY - r.top
+        const node = findNodeAt(mx, my)
+        if (node) {
+          if (selectedRef.current?.id === node.id) {
+            selectedRef.current = null
             setSelectedNodeUI(null)
           } else {
-            selectedNodeRef.current = clickedNode
-            setSelectedNodeUI(clickedNode)
+            selectedRef.current = node
+            setSelectedNodeUI(node)
           }
+        } else {
+          selectedRef.current = null
+          setSelectedNodeUI(null)
         }
-        dragRef.current.node.fx = null
-        dragRef.current.node.fy = null
-        sim.alphaTarget(0)
       }
-      dragRef.current = { active: false, node: null, moved: false }
-      panRef.current.active = false
+      dragRef.current = { active: false, lastX: 0, lastY: 0, moved: false }
       canvas.style.cursor = "grab"
     }
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault()
-      const r = canvas.getBoundingClientRect()
-      const mx = e.clientX - r.left, my = e.clientY - r.top
-      const t = transformRef.current
-
-      const factor = e.deltaY < 0 ? 1.08 : 0.92
-      const ns = Math.max(0.15, Math.min(4, t.scale * factor))
-
-      t.x = mx - (mx - t.x) * (ns / t.scale)
-      t.y = my - (my - t.y) * (ns / t.scale)
-      t.scale = ns
+      const factor = e.deltaY < 0 ? 1.05 : 0.95
+      fovRef.current = Math.max(200, Math.min(1200, fovRef.current * factor))
     }
 
     function handleMouseLeave() {
-      hoveredNodeRef.current = null
+      hoveredRef.current = null
       setTooltipUI({ x: 0, y: 0, node: null })
-      panRef.current.active = false
+      dragRef.current.active = false
     }
 
     canvas.addEventListener("mousedown", handleMouseDown)
@@ -444,19 +516,17 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
     // Resize
     const ro = new ResizeObserver(() => {
       const r = container.getBoundingClientRect()
-      const nw = r.width, nh = r.height
-      canvas.width = nw * dpr
-      canvas.height = nh * dpr
-      canvas.style.width = `${nw}px`
-      canvas.style.height = `${nh}px`
-      widthRef.current = nw
-      heightRef.current = nh
+      canvas.width = r.width * dpr
+      canvas.height = r.height * dpr
+      canvas.style.width = `${r.width}px`
+      canvas.style.height = `${r.height}px`
+      sizeRef.current = { w: r.width, h: r.height }
+      radiusRef.current = Math.min(r.width, r.height) * 0.33
     })
     ro.observe(container)
 
     return () => {
-      cancelAnimationFrame(animFrameRef.current)
-      sim.stop()
+      cancelAnimationFrame(animRef.current)
       canvas.removeEventListener("mousedown", handleMouseDown)
       canvas.removeEventListener("mousemove", handleMouseMove)
       canvas.removeEventListener("mouseup", handleMouseUp)
@@ -466,26 +536,16 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
     }
   }, [graphData, findNodeAt])
 
-  // Zoom controls
-  const zoom = useCallback((factor: number) => {
-    const t = transformRef.current
-    const cx = widthRef.current / 2, cy = heightRef.current / 2
-    const ns = Math.max(0.15, Math.min(4, t.scale * factor))
-    t.x = cx - (cx - t.x) * (ns / t.scale)
-    t.y = cy - (cy - t.y) * (ns / t.scale)
-    t.scale = ns
-  }, [])
-
   const resetView = useCallback(() => {
-    transformRef.current = { x: widthRef.current / 2, y: heightRef.current / 2, scale: 1 }
-    selectedNodeRef.current = null
+    rotRef.current = { x: 0.3, y: 0 }
+    fovRef.current = 600
+    autoRotateRef.current = true
+    selectedRef.current = null
     setSelectedNodeUI(null)
   }, [])
 
-  // Deselect
-  const deselect = useCallback(() => {
-    selectedNodeRef.current = null
-    setSelectedNodeUI(null)
+  const toggleAutoRotate = useCallback(() => {
+    autoRotateRef.current = !autoRotateRef.current
   }, [])
 
   // Connected edges for detail panel
@@ -558,13 +618,16 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
           )}
         </AnimatePresence>
 
-        {/* Zoom controls */}
+        {/* Controls */}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1 z-10">
-          <button onClick={() => zoom(1.4)} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
+          <button onClick={() => { fovRef.current = Math.max(200, fovRef.current * 0.85) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
             <ZoomIn className="size-3.5 text-white/40" />
           </button>
-          <button onClick={() => zoom(0.7)} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
+          <button onClick={() => { fovRef.current = Math.min(1200, fovRef.current * 1.15) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
             <ZoomOut className="size-3.5 text-white/40" />
+          </button>
+          <button onClick={toggleAutoRotate} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Auto-Rotation">
+            <RotateCcw className="size-3.5 text-white/40" />
           </button>
           <button onClick={resetView} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Reset">
             <Maximize2 className="size-3.5 text-white/40" />
@@ -617,7 +680,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
                     {TYPE_LABELS[selectedNodeUI.type] || selectedNodeUI.type}
                   </span>
                 </div>
-                <button onClick={deselect} className="p-1 rounded hover:bg-white/5 transition-colors">
+                <button onClick={() => { selectedRef.current = null; setSelectedNodeUI(null) }} className="p-1 rounded hover:bg-white/5 transition-colors">
                   <X className="size-3.5 text-white/30" />
                 </button>
               </div>
@@ -636,7 +699,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
                     return (
                       <div key={edge.id} className="flex items-center gap-1 text-[10px] bg-white/[0.03] rounded px-2 py-1 border border-white/[0.04]">
                         <span className="text-primary/60">{edge.type}</span>
-                        <span className="text-white/15">→</span>
+                        <span className="text-white/15">&rarr;</span>
                         <span className="text-white/50">{otherNode?.label || "?"}</span>
                       </div>
                     )
