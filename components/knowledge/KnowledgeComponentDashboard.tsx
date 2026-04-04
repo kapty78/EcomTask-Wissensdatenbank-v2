@@ -17,6 +17,12 @@ const ChatInterface = dynamic(
   () => import('@/components/knowledge/ChatInterface'),
   { ssr: false }
 )
+
+// Dynamischer Import für Knowledge Graph
+const KnowledgeGraphView = dynamic(
+  () => import('@/components/knowledge/KnowledgeGraphView'),
+  { ssr: false }
+)
 import { CreateKnowledgeBaseModal } from "@/components/knowledge/CreateKnowledgeBaseModal"
 import { getSavedCompany } from "@/lib/domain-manager"
 import { WithTooltip } from "@/components/ui/with-tooltip"
@@ -188,6 +194,8 @@ interface KnowledgeItemsFilterProps {
   onBulkDelete: () => void;
   onDeleteSourceDocument: (source: SourceDocumentSummary) => void;
   onRenameSourceDocument: (source: SourceDocumentSummary, newName: string) => Promise<void>;
+  showGraphView: boolean;
+  onToggleGraphView: () => void;
 }
 
 const KnowledgeItemsFilter = memo(({
@@ -211,7 +219,9 @@ const KnowledgeItemsFilter = memo(({
   onDeselectAll,
   onBulkDelete,
   onDeleteSourceDocument,
-  onRenameSourceDocument
+  onRenameSourceDocument,
+  showGraphView,
+  onToggleGraphView
 }: KnowledgeItemsFilterProps) => {
   const [showSourceDropdown, setShowSourceDropdown] = useState(false);
   const [showDateDropdown, setShowDateDropdown] = useState(false);
@@ -700,8 +710,25 @@ const KnowledgeItemsFilter = memo(({
             <span>Reset</span>
           </button>
         )}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Knowledge Graph Toggle */}
+        <button
+          onClick={onToggleGraphView}
+          className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs transition-all duration-200 ${
+            showGraphView
+              ? 'border-primary/50 bg-primary/10 text-primary shadow-[0_0_8px_rgba(255,85,201,0.15)]'
+              : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+          }`}
+          type="button"
+          title="Knowledge Graph anzeigen"
+        >
+          <Network size={13} />
+        </button>
       </div>
-      
+
       {/* Ergebnis-Zähler */}
       <div className="text-xs text-muted-foreground">
         {totalItemsCount > 0 
@@ -2033,8 +2060,9 @@ export default function KnowledgeComponentDashboard() {
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<any | null>(null)
   const [companyName, setCompanyName] = useState<string>("")
   const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph'>('upload')
+  const [showGraphView, setShowGraphView] = useState(false)
   // Only stretch to full height when entries or search tabs need scrolling
-  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph')
+  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || showGraphView)
   const [knowledgeItems, setKnowledgeItems] = useState<any[]>([])
   const [loadingItems, setLoadingItems] = useState(false)
   
@@ -4617,11 +4645,21 @@ export default function KnowledgeComponentDashboard() {
                                 onBulkDelete={handleBulkDelete}
                                 onDeleteSourceDocument={handleDeleteSourceDocument}
                                 onRenameSourceDocument={handleRenameSourceDocument}
+                                showGraphView={showGraphView}
+                                onToggleGraphView={() => setShowGraphView(prev => !prev)}
                               />
                             )}
                             
 
 
+                            {showGraphView && selectedKnowledgeBaseId ? (
+                              <div className="flex-1 min-h-0 overflow-hidden">
+                                <KnowledgeGraphView
+                                  knowledgeBaseId={selectedKnowledgeBaseId}
+                                  onClose={() => setShowGraphView(false)}
+                                />
+                              </div>
+                            ) : (
                             <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                               {loadingItems && filteredItems.length === 0 && allItemsLoaded.length === 0 && searchResults.length === 0 ? (
                                 <div className="flex justify-center py-8">
@@ -4771,9 +4809,10 @@ export default function KnowledgeComponentDashboard() {
                                 </div>
                               )}
                             </div>
+                            )}
                           </div>
                         )}
-                        
+
                         {activeTab === 'entries' && !selectedKnowledgeBaseId && (
                           <div className="flex flex-col items-center justify-center h-72 gap-5 select-none">
                             <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.025] border border-white/[0.06]">
