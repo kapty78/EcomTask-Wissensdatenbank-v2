@@ -476,18 +476,16 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         const alpha = dimmed ? 0.12 * depthAlpha : (isSel ? 0.95 : 0.7) * depthAlpha
 
         if (r > 3 && !dimmed) {
-          // 3D gradient: highlight top-left, shadow bottom-right
-          const hlX = node.sx - r * 0.35
-          const hlY = node.sy - r * 0.35
-          const sphereGrad = ctx!.createRadialGradient(hlX, hlY, r * 0.05, node.sx, node.sy, r)
-          // Bright highlight
-          const hlAlpha = Math.min(1, alpha * 1.6)
-          sphereGrad.addColorStop(0, `rgba(${Math.min(255, cr + 80)},${Math.min(255, cg + 80)},${Math.min(255, cb + 80)}, ${hlAlpha})`)
+          // Matte 3D gradient: subtle highlight top-left, soft shadow edge
+          const hlX = node.sx - r * 0.25
+          const hlY = node.sy - r * 0.25
+          const sphereGrad = ctx!.createRadialGradient(hlX, hlY, r * 0.15, node.sx, node.sy, r)
+          // Soft highlight (barely brighter)
+          sphereGrad.addColorStop(0, `rgba(${Math.min(255, cr + 25)},${Math.min(255, cg + 25)},${Math.min(255, cb + 25)}, ${alpha})`)
           // Base color
-          sphereGrad.addColorStop(0.5, `rgba(${cr},${cg},${cb}, ${alpha})`)
-          // Dark edge
-          const darkAlpha = alpha * 0.5
-          sphereGrad.addColorStop(1, `rgba(${Math.max(0, cr - 60)},${Math.max(0, cg - 60)},${Math.max(0, cb - 60)}, ${darkAlpha})`)
+          sphereGrad.addColorStop(0.55, `rgba(${cr},${cg},${cb}, ${alpha})`)
+          // Soft dark edge
+          sphereGrad.addColorStop(1, `rgba(${Math.max(0, cr - 35)},${Math.max(0, cg - 35)},${Math.max(0, cb - 35)}, ${alpha * 0.7})`)
 
           ctx!.beginPath()
           ctx!.arc(node.sx, node.sy, r, 0, Math.PI * 2)
