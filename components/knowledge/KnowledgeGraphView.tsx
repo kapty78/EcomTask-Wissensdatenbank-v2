@@ -170,6 +170,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
   // Camera state
   const rotRef = useRef({ x: 0.3, y: 0 }) // rotation
+  const targetRotRef = useRef<{ x: number; y: number } | null>(null) // smooth rotation target
   const autoRotateRef = useRef(true)
   const radiusRef = useRef(200)
   const fovRef = useRef(600)
@@ -177,6 +178,28 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
   // Drag state
   const dragRef = useRef({ active: false, lastX: 0, lastY: 0, moved: false })
+
+  // Navigate to a node: rotate globe so the node faces front + select it
+  const navigateToNode = useCallback((nodeId: string) => {
+    const node = nodesRef.current.find((n) => n.id === nodeId)
+    if (!node) return
+
+    // Calculate target rotation to bring node to front (negative Z = front)
+    // Node's position on sphere: theta (polar), phi (azimuthal)
+    // To bring it to front, we need rotY = -phi and rotX = -(theta - PI/2)
+    const targetY = -node.phi
+    const targetX = -(node.theta - Math.PI / 2)
+
+    // Clamp X
+    const clampedX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetX))
+
+    targetRotRef.current = { x: clampedX, y: targetY }
+    autoRotateRef.current = false
+
+    // Select the node
+    selectedRef.current = node
+    setSelectedNodeUI(node)
+  }, [setSelectedNodeUI])
 
   // Update search filter ref when query changes
   const handleSearchChange = useCallback((value: string) => {
@@ -325,8 +348,27 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
       ctx!.fillStyle = "#1a1a1a"
       ctx!.fillRect(0, 0, w, h)
 
-      // Auto-rotate
-      if (autoRotateRef.current && !dragRef.current.active) {
+      // Smooth rotation to target (navigateToNode)
+      const target = targetRotRef.current
+      if (target) {
+        const dx = target.x - rot.x
+        // Shortest angular path for Y
+        let dy = target.y - rot.y
+        dy = ((dy + Math.PI) % (Math.PI * 2)) - Math.PI
+        if (dy < -Math.PI) dy += Math.PI * 2
+
+        const speed = 0.08
+        rot.x += dx * speed
+        rot.y += dy * speed
+
+        // Stop when close enough
+        if (Math.abs(dx) < 0.005 && Math.abs(dy) < 0.005) {
+          rot.x = target.x
+          rot.y = target.y
+          targetRotRef.current = null
+        }
+      } else if (autoRotateRef.current && !dragRef.current.active) {
+        // Auto-rotate
         rot.y += 0.002
       }
 
@@ -447,6 +489,31 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
           ctx!.fillStyle = `rgba(255,255,255, ${textAlpha})`
           ctx!.fillText(node.label, node.sx, labelY)
+
+          // "zum Chunk" label above selected node
+          if (isSel && depthAlpha > 0.4) {
+            const chipY = node.sy - r - 14
+            const chipText = "zum Chunk →"
+            ctx!.font = `500 8px Inter, system-ui, sans-serif`
+            const chipMetrics = ctx!.measureText(chipText)
+            const chipW = chipMetrics.width + 10
+            const chipH = 16
+            const chipX = node.sx - chipW / 2
+
+            // Pill background
+            ctx!.beginPath()
+            ctx!.roundRect(chipX, chipY, chipW, chipH, 4)
+            ctx!.fillStyle = `rgba(40, 40, 40, ${0.9 * depthAlpha})`
+            ctx!.fill()
+            ctx!.strokeStyle = `rgba(255, 255, 255, ${0.08 * depthAlpha})`
+            ctx!.lineWidth = 0.5
+            ctx!.stroke()
+
+            ctx!.fillStyle = `rgba(255, 255, 255, ${0.5 * depthAlpha})`
+            ctx!.textAlign = "center"
+            ctx!.textBaseline = "middle"
+            ctx!.fillText(chipText, node.sx, chipY + chipH / 2)
+          }
         }
       }
 
@@ -808,16 +875,17 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
                         const otherColor = getColor(otherNode.type)
 
                         return (
-                          <div
+                          <button
                             key={edge.id}
-                            className="group flex items-center gap-1.5 text-[10px] rounded-md px-2 py-1 border transition-all duration-150 hover:border-white/[0.1] hover:bg-white/[0.03]"
+                            onClick={() => navigateToNode(otherNode.id)}
+                            className="group flex items-center gap-1.5 text-[10px] rounded-md px-2 py-1 border transition-all duration-150 hover:border-white/[0.15] hover:bg-white/[0.05] cursor-pointer"
                             style={{ borderColor: `${otherColor}15`, backgroundColor: `${otherColor}06` }}
                           >
                             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: otherColor }} />
-                            <span className="text-white/30 group-hover:text-white/40 transition-colors">{edge.type}</span>
+                            <span className="text-white/30 group-hover:text-white/45 transition-colors">{edge.type}</span>
                             <span className="text-white/10">&middot;</span>
-                            <span className="text-white/55 group-hover:text-white/70 transition-colors">{otherNode.label}</span>
-                          </div>
+                            <span className="text-white/55 group-hover:text-white/75 transition-colors">{otherNode.label}</span>
+                          </button>
                         )
                       })}
                     </div>
