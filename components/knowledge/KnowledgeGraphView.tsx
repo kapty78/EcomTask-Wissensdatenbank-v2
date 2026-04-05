@@ -133,9 +133,13 @@ function project(
 interface KnowledgeGraphViewProps {
   knowledgeBaseId: string
   onClose: () => void
+  onNodeSelect?: (node: GraphNode | null, graphData: GraphData | null) => void
 }
 
-export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: KnowledgeGraphViewProps) {
+// Re-export for external use
+export type { GraphNode, GraphEdge, GraphData }
+
+export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSelect }: KnowledgeGraphViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const animRef = useRef<number>(0)
@@ -143,7 +147,14 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedNodeUI, setSelectedNodeUI] = useState<GraphNode | null>(null)
+  const [selectedNodeUI, setSelectedNodeUIRaw] = useState<GraphNode | null>(null)
+  const graphDataRef = useRef<GraphData | null>(null)
+
+  // Wrap setSelectedNodeUI to also call onNodeSelect
+  const setSelectedNodeUI = useCallback((node: GraphNode | null) => {
+    setSelectedNodeUIRaw(node)
+    onNodeSelect?.(node, graphDataRef.current)
+  }, [onNodeSelect])
   const [tooltipUI, setTooltipUI] = useState<{ x: number; y: number; node: GraphNode | null }>({ x: 0, y: 0, node: null })
 
   // Refs for render loop (no re-renders)
@@ -174,7 +185,10 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
         const res = await fetch(`/api/knowledge/entity-graph?knowledge_base_id=${knowledgeBaseId}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
-        if (!cancelled) setGraphData(data)
+        if (!cancelled) {
+          setGraphData(data)
+          graphDataRef.current = data
+        }
       } catch (err: any) {
         if (!cancelled) setError(err.message)
       } finally {
@@ -661,37 +675,14 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose }: Knowled
         )}
       </div>
 
-      {/* Detail panel — Mini radial graph */}
-      <AnimatePresence>
-        {selectedNodeUI && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 220, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-            className="border-t border-white/[0.06] bg-[#1e1e1e] overflow-hidden relative"
-          >
-            <button
-              onClick={() => { selectedRef.current = null; setSelectedNodeUI(null) }}
-              className="absolute top-2 right-2 z-10 p-1 rounded hover:bg-white/5 transition-colors"
-            >
-              <X className="size-3.5 text-white/30" />
-            </button>
-            <MiniRadialGraph
-              centerNode={selectedNodeUI}
-              edges={connectedEdges}
-              allNodes={graphData?.nodes || []}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Detail panel removed — MiniRadialGraph is rendered externally in sidebar */}
     </div>
   )
 }
 
-// --- Mini Radial Graph (detail panel) ---
+// --- Mini Radial Graph (exported for sidebar use) ---
 
-function MiniRadialGraph({
+export function MiniRadialGraph({
   centerNode,
   edges,
   allNodes,
