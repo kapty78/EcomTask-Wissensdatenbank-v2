@@ -184,11 +184,13 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     const node = nodesRef.current.find((n) => n.id === nodeId)
     if (!node) return
 
-    // Calculate target rotation to bring node to front (negative Z = front)
-    // Node's position on sphere: theta (polar), phi (azimuthal)
-    // To bring it to front, we need rotY = -phi and rotX = -(theta - PI/2)
-    const targetY = -node.phi
-    const targetX = -(node.theta - Math.PI / 2)
+    // To bring a node to the front (where z2 is most negative after projection):
+    // After Y-rotation: z1 = x*sin(rotY) + z*cos(rotY)
+    // We want z1 to be maximally negative, so rotY = phi + π
+    // After X-rotation: z2 = y*sin(rotX) + z1*cos(rotX)
+    // We want to tilt so the latitude faces us: rotX = (theta - π/2)
+    const targetY = node.phi + Math.PI
+    const targetX = node.theta - Math.PI / 2
 
     // Clamp X
     const clampedX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetX))
