@@ -472,16 +472,38 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           ctx!.fill()
         }
 
-        // Node circle
+        // 3D sphere node
         const alpha = dimmed ? 0.12 * depthAlpha : (isSel ? 0.95 : 0.7) * depthAlpha
-        ctx!.beginPath()
-        ctx!.arc(node.sx, node.sy, r, 0, Math.PI * 2)
-        ctx!.fillStyle = `rgba(${cr},${cg},${cb}, ${alpha})`
-        ctx!.fill()
+
+        if (r > 3 && !dimmed) {
+          // 3D gradient: highlight top-left, shadow bottom-right
+          const hlX = node.sx - r * 0.35
+          const hlY = node.sy - r * 0.35
+          const sphereGrad = ctx!.createRadialGradient(hlX, hlY, r * 0.05, node.sx, node.sy, r)
+          // Bright highlight
+          const hlAlpha = Math.min(1, alpha * 1.6)
+          sphereGrad.addColorStop(0, `rgba(${Math.min(255, cr + 80)},${Math.min(255, cg + 80)},${Math.min(255, cb + 80)}, ${hlAlpha})`)
+          // Base color
+          sphereGrad.addColorStop(0.5, `rgba(${cr},${cg},${cb}, ${alpha})`)
+          // Dark edge
+          const darkAlpha = alpha * 0.5
+          sphereGrad.addColorStop(1, `rgba(${Math.max(0, cr - 60)},${Math.max(0, cg - 60)},${Math.max(0, cb - 60)}, ${darkAlpha})`)
+
+          ctx!.beginPath()
+          ctx!.arc(node.sx, node.sy, r, 0, Math.PI * 2)
+          ctx!.fillStyle = sphereGrad
+          ctx!.fill()
+        } else {
+          // Small or dimmed: flat circle
+          ctx!.beginPath()
+          ctx!.arc(node.sx, node.sy, r, 0, Math.PI * 2)
+          ctx!.fillStyle = `rgba(${cr},${cg},${cb}, ${alpha})`
+          ctx!.fill()
+        }
 
         if (isSel && depthAlpha > 0.3) {
-          ctx!.strokeStyle = `rgba(255,255,255, ${0.8 * depthAlpha})`
-          ctx!.lineWidth = 1.5
+          ctx!.strokeStyle = `rgba(255,255,255, ${0.6 * depthAlpha})`
+          ctx!.lineWidth = 1
           ctx!.stroke()
         }
 
