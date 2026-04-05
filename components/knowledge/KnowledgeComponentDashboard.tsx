@@ -718,10 +718,8 @@ const KnowledgeItemsFilter = memo(({
         {/* Knowledge Graph Toggle */}
         <button
           onClick={onToggleGraphView}
-          className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs transition-all duration-200 ${
-            showGraphView
-              ? 'border-primary/50 bg-primary/10 text-primary shadow-[0_0_8px_rgba(255,85,201,0.15)]'
-              : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+          className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs transition-all duration-200 border-border bg-card hover:bg-muted ${
+            showGraphView ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
           }`}
           type="button"
           title="Knowledge Graph anzeigen"
