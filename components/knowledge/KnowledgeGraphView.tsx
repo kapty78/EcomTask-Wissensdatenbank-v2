@@ -702,7 +702,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           <div className="absolute top-3 left-3 z-20 flex flex-col gap-2">
             {/* Search input */}
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-white/40 pointer-events-none" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-white/70 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
