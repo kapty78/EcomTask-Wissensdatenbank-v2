@@ -708,7 +708,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
                 value={searchQuery}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Entity suchen..."
-                className="w-[180px] bg-[#1e1e1e]/85 backdrop-blur-sm border border-white/[0.06] rounded-lg pl-7 pr-7 py-1.5 text-[11px] text-white/80 placeholder:text-white/20 outline-none focus:border-primary/30 transition-colors"
+                className="w-[180px] bg-[#1e1e1e]/85 backdrop-blur-sm border border-white/[0.06] rounded-lg pl-7 pr-7 py-1.5 text-[11px] text-white/80 placeholder:text-white/20 outline-none focus:border-white/[0.12] transition-colors"
               />
               {searchQuery && (
                 <button
