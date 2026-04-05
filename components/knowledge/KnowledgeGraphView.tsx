@@ -12,6 +12,7 @@ interface GraphNode {
   type: string
   description: string
   weight: number
+  chunkId: string | null
   // 3D spherical coords (set during layout)
   theta: number // polar angle
   phi: number   // azimuthal angle
@@ -134,12 +135,13 @@ interface KnowledgeGraphViewProps {
   knowledgeBaseId: string
   onClose: () => void
   onNodeSelect?: (node: GraphNode | null, graphData: GraphData | null) => void
+  onOpenChunk?: (chunkId: string) => void
 }
 
 // Re-export for external use
 export type { GraphNode, GraphEdge, GraphData }
 
-export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSelect }: KnowledgeGraphViewProps) {
+export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSelect, onOpenChunk }: KnowledgeGraphViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const animRef = useRef<number>(0)
@@ -167,6 +169,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   const searchRef = useRef("")
   const [searchQuery, setSearchQuery] = useState("")
   const matchedIdsRef = useRef<Set<string> | null>(null) // null = no filter active
+  const chunkPillRef = useRef<{ x: number; y: number; w: number; h: number; chunkId: string } | null>(null)
 
   // Camera state
   const rotRef = useRef({ x: 0.3, y: 0 }) // rotation
@@ -507,29 +510,34 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           ctx!.fillStyle = `rgba(255,255,255, ${textAlpha})`
           ctx!.fillText(node.label, node.sx, labelY)
 
-          // "zum Chunk" label above selected node
-          if (isSel && depthAlpha > 0.4) {
+          // "zum Chunk" pill next to selected node
+          if (isSel && depthAlpha > 0.4 && node.chunkId) {
             const chipY = node.sy - r - 18
             const chipText = "zum Chunk →"
             ctx!.font = `500 9px Inter, system-ui, sans-serif`
             const chipMetrics = ctx!.measureText(chipText)
             const chipW = chipMetrics.width + 14
             const chipH = 18
-            const chipX = node.sx + r
+            const chipX = node.sx + r + 4
 
             // Pill background
             ctx!.beginPath()
             ctx!.roundRect(chipX, chipY, chipW, chipH, 4)
             ctx!.fillStyle = `rgba(40, 40, 40, ${0.9 * depthAlpha})`
             ctx!.fill()
-            ctx!.strokeStyle = `rgba(255, 255, 255, ${0.08 * depthAlpha})`
+            ctx!.strokeStyle = `rgba(255, 255, 255, ${0.1 * depthAlpha})`
             ctx!.lineWidth = 0.5
             ctx!.stroke()
 
-            ctx!.fillStyle = `rgba(255, 255, 255, ${0.5 * depthAlpha})`
+            ctx!.fillStyle = `rgba(255, 255, 255, ${0.55 * depthAlpha})`
             ctx!.textAlign = "center"
             ctx!.textBaseline = "middle"
             ctx!.fillText(chipText, chipX + chipW / 2, chipY + chipH / 2)
+
+            // Store pill rect for click detection
+            chunkPillRef.current = { x: chipX, y: chipY, w: chipW, h: chipH, chunkId: node.chunkId }
+          } else if (isSel) {
+            chunkPillRef.current = null
           }
         }
       }
@@ -604,10 +612,12 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         return
       }
 
-      // Hover
+      // Hover — check pill first
+      const pill = chunkPillRef.current
+      const overPill = pill && mx >= pill.x && mx <= pill.x + pill.w && my >= pill.y && my <= pill.y + pill.h
       const node = findNodeAt(mx, my)
       hoveredRef.current = node
-      canvas.style.cursor = node ? "pointer" : "grab"
+      canvas.style.cursor = overPill ? "pointer" : node ? "pointer" : "grab"
 
       if (node) {
         setTooltipUI({ x: e.clientX, y: e.clientY, node })
@@ -618,14 +628,25 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
     function handleMouseUp(e: MouseEvent) {
       if (dragRef.current.active && !dragRef.current.moved) {
-        // Click
         const r = canvas.getBoundingClientRect()
         const mx = e.clientX - r.left, my = e.clientY - r.top
+
+        // Check "zum Chunk" pill click first
+        const pill = chunkPillRef.current
+        if (pill && mx >= pill.x && mx <= pill.x + pill.w && my >= pill.y && my <= pill.y + pill.h) {
+          onOpenChunk?.(pill.chunkId)
+          dragRef.current = { active: false, lastX: 0, lastY: 0, moved: false }
+          canvas.style.cursor = "grab"
+          return
+        }
+
+        // Normal node click
         const node = findNodeAt(mx, my)
         if (node) {
           if (selectedRef.current?.id === node.id) {
             selectedRef.current = null
             setSelectedNodeUI(null)
+            chunkPillRef.current = null
           } else {
             selectedRef.current = node
             setSelectedNodeUI(node)
@@ -633,6 +654,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         } else {
           selectedRef.current = null
           setSelectedNodeUI(null)
+          chunkPillRef.current = null
         }
       }
       dragRef.current = { active: false, lastX: 0, lastY: 0, moved: false }

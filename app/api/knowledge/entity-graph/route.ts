@@ -51,8 +51,20 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Build entity ID set for filtering orphan edges
+    // Load entity-chunk mappings (first chunk per entity for "zum Chunk" navigation)
     const entityIds = new Set(entities.map((e) => e.id))
+    const { data: entityChunks } = await supabase
+      .from("knowledge_entity_chunks")
+      .select("entity_id, chunk_id")
+      .in("entity_id", [...entityIds])
+
+    // Build entity → first chunk_id lookup
+    const entityChunkMap = new Map<string, string>()
+    for (const ec of entityChunks || []) {
+      if (!entityChunkMap.has(ec.entity_id)) {
+        entityChunkMap.set(ec.entity_id, ec.chunk_id)
+      }
+    }
 
     // Map to graph format
     const nodes = entities.map((e) => ({
@@ -61,6 +73,7 @@ export async function GET(request: NextRequest) {
       type: e.entity_type,
       description: e.description || "",
       weight: e.mention_count || 1,
+      chunkId: entityChunkMap.get(e.id) || null,
     }))
 
     const edges = (relations || [])

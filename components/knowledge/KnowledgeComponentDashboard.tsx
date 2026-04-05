@@ -4658,6 +4658,11 @@ export default function KnowledgeComponentDashboard() {
                                 <KnowledgeGraphView
                                   knowledgeBaseId={selectedKnowledgeBaseId}
                                   onClose={() => setShowGraphView(false)}
+                                  onOpenChunk={(chunkId) => {
+                                    // Build a minimal item for fetchChunkDetails
+                                    const item = { id: chunkId, source_chunk: chunkId }
+                                    fetchChunkDetails(item)
+                                  }}
                                 />
                               </div>
                             ) : (
