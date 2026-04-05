@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
-import { Loader2, ZoomIn, ZoomOut, Maximize2, X, RotateCcw } from "lucide-react"
+import { Loader2, ZoomIn, ZoomOut, Maximize2, X, RotateCcw, Search } from "lucide-react"
 
 // --- Types ---
 
@@ -164,6 +164,9 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   const edgeIndexRef = useRef<Map<string, Set<string>>>(new Map())
   const selectedRef = useRef<GraphNode | null>(null)
   const hoveredRef = useRef<GraphNode | null>(null)
+  const searchRef = useRef("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const matchedIdsRef = useRef<Set<string> | null>(null) // null = no filter active
 
   // Camera state
   const rotRef = useRef({ x: 0.3, y: 0 }) // rotation
@@ -174,6 +177,40 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
   // Drag state
   const dragRef = useRef({ active: false, lastX: 0, lastY: 0, moved: false })
+
+  // Update search filter ref when query changes
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value)
+    searchRef.current = value
+    const q = value.trim().toLowerCase()
+    if (!q) {
+      matchedIdsRef.current = null // no filter
+      return
+    }
+    const nodes = nodesRef.current
+    const edgeIndex = edgeIndexRef.current
+    // Match nodes whose label, type, or description contains the query
+    const directMatches = new Set<string>()
+    for (const n of nodes) {
+      if (
+        n.label.toLowerCase().includes(q) ||
+        n.type.toLowerCase().includes(q) ||
+        n.description.toLowerCase().includes(q) ||
+        (TYPE_LABELS[n.type] || "").toLowerCase().includes(q)
+      ) {
+        directMatches.add(n.id)
+      }
+    }
+    // Also include directly connected nodes (1 hop) so edges light up
+    const withConnected = new Set(directMatches)
+    for (const id of directMatches) {
+      const neighbors = edgeIndex.get(id)
+      if (neighbors) {
+        for (const nid of neighbors) withConnected.add(nid)
+      }
+    }
+    matchedIdsRef.current = directMatches.size > 0 ? directMatches : new Set() // empty set = nothing matches
+  }, [])
 
   // Load data
   useEffect(() => {
@@ -321,6 +358,8 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         if (depthAlpha < 0.05) continue
 
         const highlighted = selected && (src.id === selected.id || tgt.id === selected.id)
+        const searchMatchesEdge = matchedIdsRef.current === null || (matchedIdsRef.current.has(src.id) && matchedIdsRef.current.has(tgt.id))
+        const edgeDimmed = !highlighted && !searchMatchesEdge
 
         // Draw as curved arc (great circle approximation)
         ctx!.beginPath()
@@ -340,8 +379,11 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         if (highlighted) {
           ctx!.strokeStyle = `rgba(255, 85, 201, ${0.25 * depthAlpha})`
           ctx!.lineWidth = 1.5
+        } else if (searchMatchesEdge && matchedIdsRef.current !== null) {
+          ctx!.strokeStyle = `rgba(255, 85, 201, ${0.15 * depthAlpha})`
+          ctx!.lineWidth = 1
         } else {
-          ctx!.strokeStyle = `rgba(255, 255, 255, ${0.04 * depthAlpha})`
+          ctx!.strokeStyle = `rgba(255, 255, 255, ${(edgeDimmed ? 0.01 : 0.04) * depthAlpha})`
           ctx!.lineWidth = 0.5
         }
         ctx!.stroke()
@@ -357,10 +399,11 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         const isSel = selected?.id === node.id
         const isHov = hovered?.id === node.id
         const isConn = selected ? edgeIndex.get(selected.id)?.has(node.id) || false : false
-        const dimmed = selected && !isSel && !isConn
+        const searchMatched = matchedIdsRef.current === null || matchedIdsRef.current.has(node.id)
+        const dimmed = (selected && !isSel && !isConn) || (!selected && !searchMatched)
 
-        // Glow for front-facing selected/hovered nodes
-        if ((isSel || isHov) && depthAlpha > 0.4) {
+        // Glow for front-facing selected/hovered/search-matched nodes
+        if ((isSel || isHov || (searchMatched && matchedIdsRef.current !== null)) && depthAlpha > 0.4 && !dimmed) {
           const glow = ctx!.createRadialGradient(node.sx, node.sy, r * 0.3, node.sx, node.sy, r * 4)
           glow.addColorStop(0, `rgba(${cr},${cg},${cb}, ${0.25 * depthAlpha})`)
           glow.addColorStop(1, `rgba(${cr},${cg},${cb}, 0)`)
@@ -654,15 +697,42 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           </button>
         </div>
 
-        {/* Stats */}
+        {/* Search + Stats */}
         {graphData && graphData.nodes.length > 0 && (
-          <div className="absolute top-3 left-3 z-10 flex items-center gap-3 bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-1.5">
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              <span className="text-[11px] text-white/40">{graphData.stats.entities} Entities</span>
+          <div className="absolute top-3 left-3 z-10 flex flex-col gap-2">
+            {/* Search input */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3 text-white/25 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Entity suchen..."
+                className="w-[180px] bg-[#1e1e1e]/85 backdrop-blur-sm border border-white/[0.06] rounded-lg pl-7 pr-7 py-1.5 text-[11px] text-white/80 placeholder:text-white/20 outline-none focus:border-primary/30 transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => handleSearchChange("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/50 transition-colors"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
             </div>
-            <div className="w-px h-3 bg-white/[0.06]" />
-            <span className="text-[11px] text-white/40">{graphData.stats.relations} Relations</span>
+            {/* Stats */}
+            <div className="flex items-center gap-3 bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                <span className="text-[11px] text-white/40">
+                  {matchedIdsRef.current !== null
+                    ? `${matchedIdsRef.current.size} / ${graphData.stats.entities}`
+                    : graphData.stats.entities
+                  } Entities
+                </span>
+              </div>
+              <div className="w-px h-3 bg-white/[0.06]" />
+              <span className="text-[11px] text-white/40">{graphData.stats.relations} Relations</span>
+            </div>
           </div>
         )}
 
