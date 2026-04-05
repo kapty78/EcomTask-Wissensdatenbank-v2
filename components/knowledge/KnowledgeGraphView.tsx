@@ -512,8 +512,10 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault()
-      const factor = e.deltaY < 0 ? 1.05 : 0.95
-      fovRef.current = Math.max(200, Math.min(1200, fovRef.current * factor))
+      // Scroll up = zoom in = make sphere bigger
+      const factor = e.deltaY < 0 ? 1.06 : 0.94
+      const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
+      radiusRef.current = Math.max(base * 0.3, Math.min(base * 2.5, radiusRef.current * factor))
     }
 
     function handleMouseLeave() {
@@ -553,6 +555,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
   const resetView = useCallback(() => {
     rotRef.current = { x: 0.3, y: 0 }
+    radiusRef.current = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
     fovRef.current = 600
     autoRotateRef.current = true
     selectedRef.current = null
@@ -635,10 +638,10 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
         {/* Controls */}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1 z-10">
-          <button onClick={() => { fovRef.current = Math.max(200, fovRef.current * 0.85) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
+          <button onClick={() => { const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33; radiusRef.current = Math.min(base * 2.5, radiusRef.current * 1.2) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
             <ZoomIn className="size-3.5 text-white/40" />
           </button>
-          <button onClick={() => { fovRef.current = Math.min(1200, fovRef.current * 1.15) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
+          <button onClick={() => { const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33; radiusRef.current = Math.max(base * 0.3, radiusRef.current * 0.8) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
             <ZoomOut className="size-3.5 text-white/40" />
           </button>
           <button onClick={toggleAutoRotate} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Auto-Rotation">
