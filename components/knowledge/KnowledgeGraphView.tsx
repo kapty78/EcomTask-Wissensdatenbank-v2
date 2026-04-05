@@ -443,8 +443,8 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           ctx!.strokeStyle = `rgba(255, 85, 201, ${0.15 * depthAlpha})`
           ctx!.lineWidth = 1
         } else {
-          ctx!.strokeStyle = `rgba(255, 255, 255, ${(edgeDimmed ? 0.01 : 0.04) * depthAlpha})`
-          ctx!.lineWidth = 0.5
+          ctx!.strokeStyle = `rgba(255, 255, 255, ${(edgeDimmed ? 0.02 : 0.12) * depthAlpha})`
+          ctx!.lineWidth = 0.7
         }
         ctx!.stroke()
       }
