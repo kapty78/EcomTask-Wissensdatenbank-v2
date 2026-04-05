@@ -176,6 +176,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   const targetRotRef = useRef<{ x: number; y: number } | null>(null) // smooth rotation target
   const autoRotateRef = useRef(true)
   const radiusRef = useRef(200)
+  const zoomPhaseRef = useRef<'outside' | 'inside'>('outside')
   const fovRef = useRef(600)
   const sizeRef = useRef({ w: 0, h: 0 })
 
@@ -658,10 +659,33 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault()
-      // Scroll up = zoom in = make sphere bigger
-      const factor = e.deltaY < 0 ? 1.06 : 0.94
       const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
-      radiusRef.current = Math.max(base * 0.3, Math.min(base * 2.5, radiusRef.current * factor))
+      const maxR = base * 2.5
+      const minR = base * 0.3
+      const flipThreshold = maxR * 0.98
+
+      if (zoomPhaseRef.current === 'outside') {
+        // Normal zoom: scroll up = bigger sphere
+        const factor = e.deltaY < 0 ? 1.06 : 0.94
+        radiusRef.current = Math.max(minR, radiusRef.current * factor)
+
+        // If we zoom past the threshold, flip to inside
+        if (radiusRef.current >= flipThreshold) {
+          zoomPhaseRef.current = 'inside'
+          rotRef.current.y += Math.PI // 180° flip
+          radiusRef.current = maxR
+        }
+      } else {
+        // Inside phase: scroll up = sphere gets smaller (zooming "out" the other side)
+        const factor = e.deltaY < 0 ? 0.94 : 1.06
+        radiusRef.current = Math.min(maxR, radiusRef.current * factor)
+
+        // If we zoom back to small enough, flip back to outside
+        if (radiusRef.current <= flipThreshold) {
+          // Already flipped, keep going as outside from the other side
+          zoomPhaseRef.current = 'outside'
+        }
+      }
     }
 
     function handleMouseLeave() {
@@ -703,6 +727,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     rotRef.current = { x: 0.3, y: 0 }
     radiusRef.current = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
     fovRef.current = 600
+    zoomPhaseRef.current = 'outside'
     autoRotateRef.current = true
     selectedRef.current = null
     setSelectedNodeUI(null)
@@ -784,10 +809,36 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
         {/* Controls */}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1 z-10">
-          <button onClick={() => { const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33; radiusRef.current = Math.min(base * 2.5, radiusRef.current * 1.2) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
+          <button onClick={() => {
+            const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
+            if (zoomPhaseRef.current === 'outside') {
+              const newR = radiusRef.current * 1.2
+              if (newR >= base * 2.5 * 0.98) {
+                zoomPhaseRef.current = 'inside'
+                rotRef.current.y += Math.PI
+                radiusRef.current = base * 2.5
+              } else {
+                radiusRef.current = newR
+              }
+            } else {
+              radiusRef.current = Math.min(base * 2.5, radiusRef.current * 0.8)
+              if (radiusRef.current <= base * 2.5 * 0.98) zoomPhaseRef.current = 'outside'
+            }
+          }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom in">
             <ZoomIn className="size-3.5 text-white/40" />
           </button>
-          <button onClick={() => { const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33; radiusRef.current = Math.max(base * 0.3, radiusRef.current * 0.8) }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
+          <button onClick={() => {
+            const base = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
+            if (zoomPhaseRef.current === 'outside') {
+              radiusRef.current = Math.max(base * 0.3, radiusRef.current * 0.8)
+            } else {
+              const newR = radiusRef.current * 1.2
+              if (newR >= base * 2.5 * 0.98) {
+                zoomPhaseRef.current = 'inside'
+              }
+              radiusRef.current = Math.min(base * 2.5, newR)
+            }
+          }} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Zoom out">
             <ZoomOut className="size-3.5 text-white/40" />
           </button>
           <button onClick={toggleAutoRotate} className="p-1.5 rounded-md bg-[#1e1e1e]/80 hover:bg-[#282828] border border-white/[0.06] transition-colors backdrop-blur-sm" title="Auto-Rotation">
