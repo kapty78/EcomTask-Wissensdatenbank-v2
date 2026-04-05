@@ -202,10 +202,10 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   // Find node at screen position
   const findNodeAt = useCallback((mx: number, my: number): GraphNode | null => {
     const nodes = nodesRef.current
-    // Check front-to-back (sorted by z desc = front first)
-    const sorted = [...nodes].sort((a, b) => b.sz - a.sz)
+    // Check front-to-back: negative Z = near camera = front
+    const sorted = [...nodes].sort((a, b) => a.sz - b.sz)
     for (const n of sorted) {
-      if (n.sz < 0) continue // behind sphere
+      if (n.sz > 0) continue // behind sphere (positive Z = far)
       const dx = mx - n.sx, dy = my - n.sy
       const hitR = Math.max(8, n.screenR + 4)
       if (dx * dx + dy * dy <= hitR * hitR) return n
@@ -303,7 +303,8 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
       }
 
       // Sort by depth (back first)
-      const sorted = [...nodes].sort((a, b) => a.sz - b.sz)
+      // Sort back-to-front: positive Z = far (draw first), negative Z = near (draw last)
+      const sorted = [...nodes].sort((a, b) => b.sz - a.sz)
 
       // Sphere wireframe — subtle equator and meridians
       drawSphereWireframe(ctx!, cx, cy, R, rot, fov, w, h)
@@ -316,7 +317,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
         // Both behind? skip
         const avgZ = (src.sz + tgt.sz) / 2
-        const depthAlpha = Math.max(0, Math.min(1, (avgZ + R) / (2 * R)))
+        const depthAlpha = Math.max(0, Math.min(1, (R - avgZ) / (2 * R)))
         if (depthAlpha < 0.05) continue
 
         const highlighted = selected && (src.id === selected.id || tgt.id === selected.id)
@@ -348,7 +349,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
       // Draw nodes (back-to-front)
       for (const node of sorted) {
-        const depthAlpha = Math.max(0.08, Math.min(1, (node.sz + R) / (2 * R)))
+        const depthAlpha = Math.max(0.08, Math.min(1, (R - node.sz) / (2 * R)))
         const r = node.screenR
         const color = getColor(node.type)
         const [cr, cg, cb] = hexToRgb(color)
