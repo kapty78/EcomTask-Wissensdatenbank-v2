@@ -652,7 +652,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           </div>
         )}
 
-        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-0" />
 
         {/* Tooltip */}
         <AnimatePresence>
