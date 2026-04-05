@@ -404,12 +404,12 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
         // Glow for front-facing selected/hovered/search-matched nodes
         if ((isSel || isHov || (searchMatched && matchedIdsRef.current !== null)) && depthAlpha > 0.4 && !dimmed) {
-          const glow = ctx!.createRadialGradient(node.sx, node.sy, r * 0.3, node.sx, node.sy, r * 4)
-          glow.addColorStop(0, `rgba(${cr},${cg},${cb}, ${0.25 * depthAlpha})`)
+          const glow = ctx!.createRadialGradient(node.sx, node.sy, r * 0.5, node.sx, node.sy, r * 2.2)
+          glow.addColorStop(0, `rgba(${cr},${cg},${cb}, ${0.12 * depthAlpha})`)
           glow.addColorStop(1, `rgba(${cr},${cg},${cb}, 0)`)
           ctx!.fillStyle = glow
           ctx!.beginPath()
-          ctx!.arc(node.sx, node.sy, r * 4, 0, Math.PI * 2)
+          ctx!.arc(node.sx, node.sy, r * 2.2, 0, Math.PI * 2)
           ctx!.fill()
         }
 
