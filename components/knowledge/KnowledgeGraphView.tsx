@@ -419,7 +419,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
         const highlighted = selected && (src.id === selected.id || tgt.id === selected.id)
         const searchMatchesEdge = matchedIdsRef.current === null || (matchedIdsRef.current.has(src.id) && matchedIdsRef.current.has(tgt.id))
-        const edgeDimmed = !highlighted && !searchMatchesEdge
+        const edgeDimmed = !highlighted && (!searchMatchesEdge || (selected && !highlighted))
 
         // Draw as curved arc (great circle approximation)
         ctx!.beginPath()
