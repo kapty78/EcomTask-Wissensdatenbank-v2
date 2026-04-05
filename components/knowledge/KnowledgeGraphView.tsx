@@ -40,18 +40,18 @@ interface GraphData {
 // --- Colors (Wissensdatenbank design) ---
 
 const TYPE_COLORS: Record<string, string> = {
-  person: "#ff55c9",
-  organization: "#b38bff",
-  product: "#5eadff",
-  process: "#4dd6a5",
-  location: "#f0a56e",
-  role: "#e8c95a",
-  feature: "#5ec6d4",
-  rule: "#e87474",
-  step: "#8dd45e",
-  spec: "#8b8fff",
-  contact: "#d87ef5",
-  definition: "#7a8494",
+  person: "#ff55c9",       // primary pink
+  organization: "#ff79d4", // lighter pink
+  product: "#d4a0c0",      // muted rose
+  process: "#b8b8b8",      // light grey
+  location: "#e0a8c8",     // dusty pink
+  role: "#c9c9c9",         // silver grey
+  feature: "#d6b8cb",      // warm mauve
+  rule: "#ff99d6",         // soft pink
+  step: "#a0a0a0",         // medium grey
+  spec: "#c4b0be",         // grey-rose
+  contact: "#e8b0d4",      // light rose
+  definition: "#8a8a8a",   // dark grey
 }
 
 const TYPE_LABELS: Record<string, string> = {
