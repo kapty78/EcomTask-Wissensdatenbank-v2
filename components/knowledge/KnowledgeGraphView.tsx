@@ -675,7 +675,83 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         )}
       </div>
 
-      {/* Detail panel removed — MiniRadialGraph is rendered externally in sidebar */}
+      {/* Detail panel */}
+      <AnimatePresence>
+        {selectedNodeUI && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-white/[0.06] bg-gradient-to-b from-[#1e1e1e] to-[#1a1a1a]">
+              <div className="px-4 py-3">
+                {/* Header row */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="relative">
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: getColor(selectedNodeUI.type) }} />
+                      <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ backgroundColor: getColor(selectedNodeUI.type) }} />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold text-white">{selectedNodeUI.label}</span>
+                      <span className="ml-2 text-[10px] uppercase tracking-widest text-white/20">
+                        {TYPE_LABELS[selectedNodeUI.type] || selectedNodeUI.type}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { selectedRef.current = null; setSelectedNodeUI(null) }}
+                    className="p-1.5 rounded-md hover:bg-white/5 transition-colors"
+                  >
+                    <X className="size-3.5 text-white/25" />
+                  </button>
+                </div>
+
+                {/* Description */}
+                {selectedNodeUI.description && (
+                  <p className="text-[11px] text-white/35 mb-3 leading-relaxed">{selectedNodeUI.description}</p>
+                )}
+
+                {/* Connections */}
+                {connectedEdges.length > 0 && (
+                  <div>
+                    <div className="text-[9px] uppercase tracking-widest text-white/15 mb-2">
+                      {connectedEdges.length} Verbindung{connectedEdges.length !== 1 ? 'en' : ''}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {connectedEdges.map((edge) => {
+                        const s = typeof edge.source === "string" ? edge.source : (edge.source as any).id
+                        const isSource = s === selectedNodeUI.id
+                        const otherId = isSource
+                          ? (typeof edge.target === "string" ? edge.target : (edge.target as any).id)
+                          : s
+                        const otherNode = graphData?.nodes.find((n) => n.id === otherId)
+                        if (!otherNode) return null
+                        const otherColor = getColor(otherNode.type)
+
+                        return (
+                          <div
+                            key={edge.id}
+                            className="group flex items-center gap-1.5 text-[10px] rounded-md px-2 py-1 border transition-all duration-150 hover:border-white/[0.1] hover:bg-white/[0.03]"
+                            style={{ borderColor: `${otherColor}15`, backgroundColor: `${otherColor}06` }}
+                          >
+                            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: otherColor }} />
+                            <span className="text-white/30 group-hover:text-white/40 transition-colors">{edge.type}</span>
+                            <span className="text-white/10">&middot;</span>
+                            <span className="text-white/55 group-hover:text-white/70 transition-colors">{otherNode.label}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

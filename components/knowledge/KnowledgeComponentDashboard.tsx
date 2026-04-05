@@ -24,9 +24,6 @@ const KnowledgeGraphView = dynamic(
   { ssr: false }
 )
 
-// Mini radial graph for sidebar (direct import, no dynamic needed since it's just canvas)
-import { MiniRadialGraph } from '@/components/knowledge/KnowledgeGraphView'
-import type { GraphNode, GraphEdge, GraphData } from '@/components/knowledge/KnowledgeGraphView'
 import { CreateKnowledgeBaseModal } from "@/components/knowledge/CreateKnowledgeBaseModal"
 import { getSavedCompany } from "@/lib/domain-manager"
 import { WithTooltip } from "@/components/ui/with-tooltip"
@@ -2065,8 +2062,6 @@ export default function KnowledgeComponentDashboard() {
   const [companyName, setCompanyName] = useState<string>("")
   const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph'>('upload')
   const [showGraphView, setShowGraphView] = useState(false)
-  const [selectedGraphNode, setSelectedGraphNode] = useState<any | null>(null)
-  const [graphDataForMini, setGraphDataForMini] = useState<any | null>(null)
   // Only stretch to full height when entries or search tabs need scrolling
   const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || showGraphView)
   const [knowledgeItems, setKnowledgeItems] = useState<any[]>([])
@@ -4495,30 +4490,7 @@ export default function KnowledgeComponentDashboard() {
                         {/* Create button is now inside KnowledgeBaseList */}
                       </div>
 
-                      {/* Knowledge Graph Detail — Mini radial graph when node selected */}
-                      {showGraphView && selectedGraphNode && graphDataForMini && (
-                        <div className="hidden xl:block mt-3">
-                          <div className="rounded-xl border border-white/[0.06] bg-[#1e1e1e] overflow-hidden relative">
-                            <button
-                              onClick={() => setSelectedGraphNode(null)}
-                              className="absolute top-2 right-2 z-10 p-1 rounded hover:bg-white/5 transition-colors"
-                            >
-                              <X className="size-3 text-white/30" />
-                            </button>
-                            <div className="h-[240px]">
-                              <MiniRadialGraph
-                                centerNode={selectedGraphNode}
-                                edges={graphDataForMini.edges.filter((e: any) => {
-                                  const s = typeof e.source === 'string' ? e.source : e.source?.id
-                                  const t = typeof e.target === 'string' ? e.target : e.target?.id
-                                  return s === selectedGraphNode.id || t === selectedGraphNode.id
-                                })}
-                                allNodes={graphDataForMini.nodes}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      {/* Knowledge Graph Detail — removed, now handled inside KnowledgeGraphView */}
 
                       {/* Mobile: Show selected KB name when collapsed */}
                       {!isMobileKbOpen && selectedKnowledgeBaseId && (
@@ -4688,10 +4660,6 @@ export default function KnowledgeComponentDashboard() {
                                 <KnowledgeGraphView
                                   knowledgeBaseId={selectedKnowledgeBaseId}
                                   onClose={() => setShowGraphView(false)}
-                                  onNodeSelect={(node, data) => {
-                                    setSelectedGraphNode(node)
-                                    setGraphDataForMini(data)
-                                  }}
                                 />
                               </div>
                             ) : (
