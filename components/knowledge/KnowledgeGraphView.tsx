@@ -492,13 +492,13 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
 
           // "zum Chunk" label above selected node
           if (isSel && depthAlpha > 0.4) {
-            const chipY = node.sy - r - 14
+            const chipY = node.sy - r - 18
             const chipText = "zum Chunk →"
-            ctx!.font = `500 8px Inter, system-ui, sans-serif`
+            ctx!.font = `500 9px Inter, system-ui, sans-serif`
             const chipMetrics = ctx!.measureText(chipText)
-            const chipW = chipMetrics.width + 10
-            const chipH = 16
-            const chipX = node.sx - chipW / 2
+            const chipW = chipMetrics.width + 14
+            const chipH = 18
+            const chipX = node.sx + r
 
             // Pill background
             ctx!.beginPath()
@@ -512,7 +512,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
             ctx!.fillStyle = `rgba(255, 255, 255, ${0.5 * depthAlpha})`
             ctx!.textAlign = "center"
             ctx!.textBaseline = "middle"
-            ctx!.fillText(chipText, node.sx, chipY + chipH / 2)
+            ctx!.fillText(chipText, chipX + chipW / 2, chipY + chipH / 2)
           }
         }
       }
