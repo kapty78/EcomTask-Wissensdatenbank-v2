@@ -210,10 +210,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     const xzLen = Math.sqrt(nx * nx + nz * nz)
     const targetX = Math.atan2(ny, xzLen)
 
-    // Clamp X rotation
-    const clampedX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetX))
-
-    targetRotRef.current = { x: clampedX, y: targetY }
+    targetRotRef.current = { x: targetX, y: targetY }
     autoRotateRef.current = false
 
     // Select the node
@@ -604,8 +601,6 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragRef.current.moved = true
         rotRef.current.y += dx * 0.005
         rotRef.current.x += dy * 0.005
-        // Clamp X rotation
-        rotRef.current.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotRef.current.x))
         dragRef.current.lastX = mx
         dragRef.current.lastY = my
         canvas.style.cursor = "grabbing"
