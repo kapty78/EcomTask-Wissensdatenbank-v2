@@ -384,7 +384,9 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         }
 
         // Label (only for front-facing, not too small)
-        const showLabel = depthAlpha > 0.5 && r > 3 && (isSel || isHov || (depthAlpha > 0.7 && r > 4))
+        const baseR = Math.min(sizeRef.current.w, sizeRef.current.h) * 0.33
+        const zoomLevel = radiusRef.current / baseR
+        const showLabel = isSel || isHov || (depthAlpha > 0.6 && zoomLevel > 1.6 && r > 6)
         if (showLabel) {
           const fs = Math.max(8, Math.min(12, 10 * (r / 8)))
           ctx!.font = `${isSel || isHov ? 600 : 400} ${fs}px Inter, system-ui, sans-serif`
