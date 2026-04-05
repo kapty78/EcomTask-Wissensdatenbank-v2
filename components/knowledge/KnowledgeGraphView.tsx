@@ -86,15 +86,115 @@ function hexToRgb(hex: string): [number, number, number] {
 function fibonacciSphere(n: number): Array<{ theta: number; phi: number }> {
   const points: Array<{ theta: number; phi: number }> = []
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
-
   for (let i = 0; i < n; i++) {
-    const y = 1 - (i / (n - 1)) * 2 // -1 to 1
-    const radiusAtY = Math.sqrt(1 - y * y)
-    const theta = Math.acos(y)
+    const y = 1 - (i / Math.max(1, n - 1)) * 2
+    const theta = Math.acos(Math.max(-1, Math.min(1, y)))
     const phi = goldenAngle * i
     points.push({ theta, phi })
   }
   return points
+}
+
+/**
+ * Force-directed layout on sphere surface.
+ * Starts from Fibonacci positions, then iterates:
+ * - Connected nodes attract each other
+ * - All nodes repel each other
+ * - Positions stay on the unit sphere (re-normalized after each step)
+ */
+function layoutOnSphere(
+  n: number,
+  edges: Array<{ source: string; target: string }>,
+  nodeIds: string[],
+  iterations: number = 80,
+): Array<{ theta: number; phi: number }> {
+  if (n <= 1) return fibonacciSphere(n)
+
+  // Start with Fibonacci
+  const positions = fibonacciSphere(n)
+
+  // Convert to cartesian for easier force math
+  const pts = positions.map((p) => ({
+    x: Math.sin(p.theta) * Math.cos(p.phi),
+    y: Math.cos(p.theta),
+    z: Math.sin(p.theta) * Math.sin(p.phi),
+  }))
+
+  // Build index lookup
+  const idxMap = new Map<string, number>()
+  nodeIds.forEach((id, i) => idxMap.set(id, i))
+
+  // Build edge list as index pairs
+  const edgePairs: Array<[number, number]> = []
+  for (const e of edges) {
+    const si = idxMap.get(e.source)
+    const ti = idxMap.get(e.target)
+    if (si !== undefined && ti !== undefined) {
+      edgePairs.push([si, ti])
+    }
+  }
+
+  const repulsion = 0.002
+  const attraction = 0.02
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const decay = 1 - iter / iterations // cooling
+
+    // Force accumulators
+    const fx = new Float64Array(n)
+    const fy = new Float64Array(n)
+    const fz = new Float64Array(n)
+
+    // Repulsion: all pairs (O(n²) but n is small, <500)
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = pts[i].x - pts[j].x
+        const dy = pts[i].y - pts[j].y
+        const dz = pts[i].z - pts[j].z
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.001
+        const force = repulsion / (dist * dist)
+        const fdx = (dx / dist) * force
+        const fdy = (dy / dist) * force
+        const fdz = (dz / dist) * force
+        fx[i] += fdx; fy[i] += fdy; fz[i] += fdz
+        fx[j] -= fdx; fy[j] -= fdy; fz[j] -= fdz
+      }
+    }
+
+    // Attraction: connected pairs
+    for (const [si, ti] of edgePairs) {
+      const dx = pts[ti].x - pts[si].x
+      const dy = pts[ti].y - pts[si].y
+      const dz = pts[ti].z - pts[si].z
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.001
+      const force = attraction * dist
+      const fdx = (dx / dist) * force
+      const fdy = (dy / dist) * force
+      const fdz = (dz / dist) * force
+      fx[si] += fdx; fy[si] += fdy; fz[si] += fdz
+      fx[ti] -= fdx; fy[ti] -= fdy; fz[ti] -= fdz
+    }
+
+    // Apply forces and re-project onto unit sphere
+    for (let i = 0; i < n; i++) {
+      pts[i].x += fx[i] * decay
+      pts[i].y += fy[i] * decay
+      pts[i].z += fz[i] * decay
+      // Normalize back to sphere surface
+      const len = Math.sqrt(pts[i].x * pts[i].x + pts[i].y * pts[i].y + pts[i].z * pts[i].z)
+      if (len > 0) {
+        pts[i].x /= len
+        pts[i].y /= len
+        pts[i].z /= len
+      }
+    }
+  }
+
+  // Convert back to spherical
+  return pts.map((p) => ({
+    theta: Math.acos(Math.max(-1, Math.min(1, p.y))),
+    phi: Math.atan2(p.z, p.x),
+  }))
 }
 
 // --- 3D math ---
@@ -313,22 +413,19 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     const sphereR = Math.min(w, h) * 0.33
     radiusRef.current = sphereR
 
-    // Distribute nodes on Fibonacci sphere
-    const positions = fibonacciSphere(graphData.nodes.length)
+    // Layout nodes on sphere — connected nodes cluster together
+    const nodeIds = graphData.nodes.map((n) => n.id)
+    const edgesForLayout = graphData.edges.map((e) => ({
+      source: typeof e.source === "string" ? e.source : (e.source as any).id,
+      target: typeof e.target === "string" ? e.target : (e.target as any).id,
+    }))
+    const positions = layoutOnSphere(graphData.nodes.length, edgesForLayout, nodeIds)
     const nodes: GraphNode[] = graphData.nodes.map((n, i) => ({
       ...n,
       theta: positions[i].theta,
       phi: positions[i].phi,
       sx: 0, sy: 0, sz: 0, screenR: 0,
     }))
-
-    // Sort by weight descending — high-weight nodes get "better" (more spread out) positions
-    const byWeight = [...nodes].sort((a, b) => b.weight - a.weight)
-    const sortedPositions = [...positions]
-    byWeight.forEach((node, i) => {
-      node.theta = sortedPositions[i].theta
-      node.phi = sortedPositions[i].phi
-    })
 
     const edges: GraphEdge[] = graphData.edges.map((e) => ({ ...e } as GraphEdge))
     nodesRef.current = nodes
