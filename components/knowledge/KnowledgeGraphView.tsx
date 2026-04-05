@@ -184,15 +184,30 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     const node = nodesRef.current.find((n) => n.id === nodeId)
     if (!node) return
 
-    // To bring a node to the front (where z2 is most negative after projection):
-    // After Y-rotation: z1 = x*sin(rotY) + z*cos(rotY)
-    // We want z1 to be maximally negative, so rotY = phi + π
-    // After X-rotation: z2 = y*sin(rotX) + z1*cos(rotX)
-    // We want to tilt so the latitude faces us: rotX = (theta - π/2)
-    const targetY = node.phi + Math.PI
-    const targetX = node.theta - Math.PI / 2
+    // Convert node's spherical coords to cartesian (unit sphere)
+    const nx = Math.sin(node.theta) * Math.cos(node.phi)
+    const ny = Math.cos(node.theta)
+    const nz = Math.sin(node.theta) * Math.sin(node.phi)
 
-    // Clamp X
+    // We want to find rotY, rotX such that after rotation the point
+    // ends up at (0, 0, -1) i.e. directly facing the camera.
+    //
+    // Step 1: rotY to align the point's xz projection with -z axis
+    // After Y-rotation: x1 = nx*cos(rotY) - nz*sin(rotY)
+    //                    z1 = nx*sin(rotY) + nz*cos(rotY)
+    // We want x1 = 0 and z1 < 0, so rotY = atan2(-nx, -nz)
+    const targetY = Math.atan2(-nx, -nz)
+
+    // Step 2: After Y-rotation, the point is at (0, ny, -sqrt(nx²+nz²))
+    // Now rotX to tilt: we want y1=0 and z2<0
+    // z1 after Y-rot = -sqrt(nx²+nz²)
+    // After X-rotation: y1 = ny*cos(rotX) - z1*sin(rotX)
+    //                   z2 = ny*sin(rotX) + z1*cos(rotX)
+    // We want y1 = 0: rotX = atan2(ny, -z1) = atan2(ny, sqrt(nx²+nz²))
+    const xzLen = Math.sqrt(nx * nx + nz * nz)
+    const targetX = Math.atan2(ny, xzLen)
+
+    // Clamp X rotation
     const clampedX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetX))
 
     targetRotRef.current = { x: clampedX, y: targetY }
