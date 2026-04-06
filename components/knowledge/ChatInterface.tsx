@@ -22,7 +22,8 @@ interface SearchResult {
   }
   similarity: number
   title?: string
-  file_name?: string // Neu hinzugefügt
+  file_name?: string
+  search_source?: string // "vector", "graph", or "both"
   facts?: any[]
 }
 
@@ -106,6 +107,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
           similarity: number
           fact_type?: string
           source_name?: string
+          search_source?: string
         }>
 
         rawSearchResults = kbResults.map(item => ({
@@ -124,6 +126,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
           similarity: item.similarity,
           title: item.source_name || '',
           file_name: item.source_name || '',
+          search_source: item.search_source || 'vector',
         }))
       } else if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && 'pagecontent' in data[0]) {
         // Alte Struktur (falls noch verwendet)
@@ -392,15 +395,30 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
                           <p className="text-sm text-white line-clamp-3 flex-1">
                             {previewText}
                           </p>
-                          <div className="flex items-center gap-2 text-[10px] text-gray-400 font-medium flex-shrink-0 bg-[#1e1e1e] px-2 py-1 rounded-full border border-[#333]">
-                            <div
-                              className="w-4 h-4 rounded-full border border-white/10 shadow-sm flex items-center justify-center text-[9px] font-bold text-white"
-                              style={{ backgroundColor: getChunkColor(result.metadata?.chunk_id || `idx-${index}`) }}
-                              title={result.metadata?.chunk_id ? `Chunk-Gruppe: ${result.metadata.chunk_id.substring(0, 8)}...` : `Ergebnis ${index + 1}`}
-                            >
-                              {String.fromCharCode(65 + index)}
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {result.search_source && result.search_source !== 'vector' && (
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                                result.search_source === 'both'
+                                  ? 'text-primary/70 border-primary/20 bg-primary/5'
+                                  : 'text-white/40 border-white/10 bg-white/[0.03]'
+                              }`} title={
+                                result.search_source === 'graph' ? 'Gefunden über Knowledge Graph'
+                                : result.search_source === 'both' ? 'Gefunden über Vektor + Knowledge Graph'
+                                : ''
+                              }>
+                                {result.search_source === 'graph' ? 'Graph' : 'Vektor + Graph'}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px] text-gray-400 font-medium bg-[#1e1e1e] px-2 py-1 rounded-full border border-[#333]">
+                              <div
+                                className="w-4 h-4 rounded-full border border-white/10 shadow-sm flex items-center justify-center text-[9px] font-bold text-white"
+                                style={{ backgroundColor: getChunkColor(result.metadata?.chunk_id || `idx-${index}`) }}
+                                title={result.metadata?.chunk_id ? `Chunk-Gruppe: ${result.metadata.chunk_id.substring(0, 8)}...` : `Ergebnis ${index + 1}`}
+                              >
+                                {String.fromCharCode(65 + index)}
+                              </div>
+                              {Math.round(result.similarity * 100)}%
                             </div>
-                            {Math.round(result.similarity * 100)}%
                           </div>
                         </div>
 
