@@ -24,6 +24,7 @@ interface SearchResult {
   title?: string
   file_name?: string
   search_source?: string // "vector", "graph", or "both"
+  matched_facts?: Array<{ content: string; similarity: number }>
   facts?: any[]
 }
 
@@ -127,6 +128,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
           title: item.source_name || '',
           file_name: item.source_name || '',
           search_source: item.search_source || 'vector',
+          matched_facts: (item as any).matched_facts || [],
         }))
       } else if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && 'pagecontent' in data[0]) {
         // Alte Struktur (falls noch verwendet)
@@ -437,6 +439,21 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
                                   <div dangerouslySetInnerHTML={{ __html: processedContent }} />
                                 );
                               })()}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Matched Facts */}
+                        {result.matched_facts && result.matched_facts.length > 1 && (
+                          <div className="mt-3 pt-3 border-t border-[#333333]">
+                            <p className="text-[9px] text-gray-500 mb-1.5">{result.matched_facts.length} Fakten gefunden:</p>
+                            <div className="flex flex-col gap-1">
+                              {result.matched_facts.map((fact, fi) => (
+                                <div key={fi} className="flex items-start gap-2 text-[10px]">
+                                  <span className="text-gray-600 flex-shrink-0 mt-0.5">{Math.round(fact.similarity * 100)}%</span>
+                                  <span className="text-gray-400 line-clamp-1">{fact.content}</span>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
