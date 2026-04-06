@@ -109,6 +109,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
           fact_type?: string
           source_name?: string
           search_source?: string
+          matched_facts?: Array<{ content: string; similarity: number }>
         }>
 
         rawSearchResults = kbResults.map(item => ({
@@ -128,7 +129,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
           title: item.source_name || '',
           file_name: item.source_name || '',
           search_source: item.search_source || 'vector',
-          matched_facts: (item as any).matched_facts || [],
+          matched_facts: item.matched_facts || [],
         }))
       } else if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && 'pagecontent' in data[0]) {
         // Alte Struktur (falls noch verwendet)
