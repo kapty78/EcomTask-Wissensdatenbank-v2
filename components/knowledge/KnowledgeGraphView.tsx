@@ -13,6 +13,8 @@ interface GraphNode {
   description: string
   weight: number
   chunkId: string | null
+  communityId: number | null
+  communityColor: string | null
   // 3D spherical coords (set during layout)
   theta: number // polar angle
   phi: number   // azimuthal angle
@@ -22,6 +24,16 @@ interface GraphNode {
   sz: number // depth for sorting
   screenR: number
 }
+
+interface GraphCommunity {
+  id: number
+  size: number
+  theme: string
+  topEntities: string[]
+  color: string
+}
+
+type ColorMode = "community" | "type"
 
 interface GraphEdge {
   id: string
@@ -35,7 +47,8 @@ interface GraphEdge {
 interface GraphData {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  stats: { entities: number; relations: number }
+  communities: GraphCommunity[]
+  stats: { entities: number; relations: number; communities: number }
 }
 
 // --- Colors (Wissensdatenbank design) ---
@@ -72,6 +85,13 @@ const TYPE_LABELS: Record<string, string> = {
 
 function getColor(type: string): string {
   return TYPE_COLORS[type] || "#7a8494"
+}
+
+// Color a node according to the active color mode. Falls back to type color
+// when no community is assigned (e.g. brand-new entity before clustering ran).
+function getNodeColor(node: { type: string; communityColor: string | null }, mode: ColorMode): string {
+  if (mode === "community" && node.communityColor) return node.communityColor
+  return getColor(node.type)
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -268,6 +288,9 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   const hoveredRef = useRef<GraphNode | null>(null)
   const searchRef = useRef("")
   const [searchQuery, setSearchQuery] = useState("")
+  const [colorMode, setColorMode] = useState<ColorMode>("community")
+  const colorModeRef = useRef<ColorMode>("community")
+  useEffect(() => { colorModeRef.current = colorMode }, [colorMode])
   const matchedIdsRef = useRef<Set<string> | null>(null) // null = no filter active
   const chunkPillRef = useRef<{ x: number; y: number; w: number; h: number; chunkId: string } | null>(null)
 
@@ -362,9 +385,18 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
         const res = await fetch(`/api/knowledge/entity-graph?knowledge_base_id=${knowledgeBaseId}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
+        // Back-compat: server may return without communities field on older deploys
+        const normalized: GraphData = {
+          nodes: data.nodes || [],
+          edges: data.edges || [],
+          communities: data.communities || [],
+          stats: { entities: data.stats?.entities || 0, relations: data.stats?.relations || 0, communities: data.stats?.communities || 0 },
+        }
         if (!cancelled) {
-          setGraphData(data)
-          graphDataRef.current = data
+          setGraphData(normalized)
+          graphDataRef.current = normalized
+          // Fall back to type coloring if no communities exist yet
+          if (normalized.communities.length === 0) setColorMode("type")
         }
       } catch (err: any) {
         if (!cancelled) setError(err.message)
@@ -549,7 +581,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
       for (const node of sorted) {
         const depthAlpha = Math.max(0.08, Math.min(1, (R - node.sz) / (2 * R)))
         const r = node.screenR
-        const color = getColor(node.type)
+        const color = getNodeColor(node, colorModeRef.current)
         const [cr, cg, cb] = hexToRgb(color)
 
         const isSel = selected?.id === node.id
@@ -884,7 +916,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
             >
               <div className="bg-[#252525]/95 backdrop-blur-sm border border-white/[0.08] rounded-lg px-3 py-2 shadow-2xl max-w-[220px]">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getColor(tooltipUI.node.type) }} />
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getNodeColor(tooltipUI.node, colorMode) }} />
                   <span className="text-xs font-semibold text-white truncate">{tooltipUI.node.label}</span>
                 </div>
                 <div className="text-[10px] text-white/35 uppercase tracking-wider">
@@ -953,17 +985,70 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
           </div>
         )}
 
-        {/* Legend */}
-        {presentTypes.length > 0 && (
-          <div className="absolute top-3 right-3 z-10 bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-2">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-              {presentTypes.map((type) => (
-                <div key={type} className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getColor(type) }} />
-                  <span className="text-[10px] text-white/35">{TYPE_LABELS[type] || type}</span>
-                </div>
-              ))}
+        {/* Mode toggle + Legend */}
+        {graphData && graphData.nodes.length > 0 && (
+          <div className="absolute top-3 right-3 z-10 flex flex-col gap-2 items-end">
+            {/* Color-mode toggle */}
+            <div className="bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg p-0.5 flex gap-0.5">
+              <button
+                onClick={() => setColorMode("community")}
+                disabled={graphData.communities.length === 0}
+                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${
+                  colorMode === "community"
+                    ? "bg-white/[0.08] text-white/85"
+                    : "text-white/40 hover:text-white/60 disabled:opacity-30"
+                }`}
+                title={graphData.communities.length === 0 ? "Noch keine Communities erkannt" : "Nach Themen-Cluster färben"}
+              >
+                Themen
+              </button>
+              <button
+                onClick={() => setColorMode("type")}
+                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${
+                  colorMode === "type" ? "bg-white/[0.08] text-white/85" : "text-white/40 hover:text-white/60"
+                }`}
+              >
+                Typen
+              </button>
             </div>
+
+            {/* Legend (top 8 communities or all types present) */}
+            {colorMode === "community" && graphData.communities.length > 0 ? (
+              <div className="bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-2 max-w-[260px]">
+                <div className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">
+                  Themen ({graphData.communities.length})
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  {graphData.communities.slice(0, 8).map((c) => (
+                    <div key={c.id} className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
+                      <span className="text-[10px] text-white/55 truncate" title={c.theme}>
+                        {c.theme || `Cluster #${c.id}`}
+                      </span>
+                      <span className="text-[9px] text-white/25 flex-shrink-0">{c.size}</span>
+                    </div>
+                  ))}
+                  {graphData.communities.length > 8 && (
+                    <div className="text-[9px] text-white/20 mt-0.5">
+                      +{graphData.communities.length - 8} weitere
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              presentTypes.length > 0 && (
+                <div className="bg-[#1e1e1e]/80 backdrop-blur-sm border border-white/[0.06] rounded-lg px-3 py-2">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                    {presentTypes.map((type) => (
+                      <div key={type} className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getColor(type) }} />
+                        <span className="text-[10px] text-white/35">{TYPE_LABELS[type] || type}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
           </div>
         )}
       </div>
@@ -984,14 +1069,24 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2.5">
                     <div className="relative">
-                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: getColor(selectedNodeUI.type) }} />
-                      <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ backgroundColor: getColor(selectedNodeUI.type) }} />
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: getNodeColor(selectedNodeUI, colorMode) }} />
+                      <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ backgroundColor: getNodeColor(selectedNodeUI, colorMode) }} />
                     </div>
                     <div>
                       <span className="text-sm font-semibold text-white">{selectedNodeUI.label}</span>
                       <span className="ml-2 text-[10px] uppercase tracking-widest text-white/20">
                         {TYPE_LABELS[selectedNodeUI.type] || selectedNodeUI.type}
                       </span>
+                      {selectedNodeUI.communityId != null && (() => {
+                        const comm = graphData?.communities.find((c) => c.id === selectedNodeUI.communityId)
+                        if (!comm?.theme) return null
+                        return (
+                          <div className="text-[10px] text-white/35 mt-0.5 flex items-center gap-1">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: comm.color }} />
+                            {comm.theme}
+                          </div>
+                        )
+                      })()}
                     </div>
                   </div>
                   <button
@@ -1022,7 +1117,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
                           : s
                         const otherNode = graphData?.nodes.find((n) => n.id === otherId)
                         if (!otherNode) return null
-                        const otherColor = getColor(otherNode.type)
+                        const otherColor = getNodeColor(otherNode, colorMode)
 
                         return (
                           <button
@@ -1127,7 +1222,7 @@ export function MiniRadialGraph({
       for (let i = 0; i < neighbors.length; i++) {
         const pos = positions[i]
         const isHov = hovered === neighbors[i].node.id
-        const color = getColor(neighbors[i].node.type)
+        const color = getNodeColor(neighbors[i].node, colorModeRef.current)
         const [r, g, b] = hexToRgb(color)
 
         // Edge line
@@ -1163,7 +1258,7 @@ export function MiniRadialGraph({
       for (let i = 0; i < neighbors.length; i++) {
         const pos = positions[i]
         const nb = neighbors[i]
-        const color = getColor(nb.node.type)
+        const color = getNodeColor(nb.node, colorModeRef.current)
         const [r, g, b] = hexToRgb(color)
         const isHov = hovered === nb.node.id
 
@@ -1198,7 +1293,7 @@ export function MiniRadialGraph({
       }
 
       // Center node — glow
-      const cc = getColor(centerNode.type)
+      const cc = getNodeColor(centerNode, colorModeRef.current)
       const [cr, cg, cb] = hexToRgb(cc)
       const centerGlow = ctx!.createRadialGradient(cx, cy, centerR * 0.3, cx, cy, centerR * 3.5)
       centerGlow.addColorStop(0, `rgba(${cr},${cg},${cb}, 0.25)`)
