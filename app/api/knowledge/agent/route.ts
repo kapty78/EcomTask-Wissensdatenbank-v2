@@ -405,6 +405,12 @@ function buildToolLabel(toolName: string, args: any) {
       return `Dokumente laden${args?.query ? `: ${clip(String(args.query), 40)}` : ""}`
     case "search_knowledge":
       return `Suche: "${clip(String(args?.query || ""), 70)}"`
+    case "debug_knowledge_search":
+      return `Diagnose-Suche: "${clip(String(args?.query || ""), 60)}"`
+    case "search_chunks_by_text":
+      return `Chunks per Text suchen: "${clip(String(args?.query || ""), 50)}"`
+    case "search_facts_by_text":
+      return `Fakten per Text suchen: "${clip(String(args?.query || ""), 50)}"`
     case "get_chunk_details":
       return `Chunk laden: ${String(args?.chunk_id || "").slice(0, 8)}`
     case "create_chunk":
@@ -2155,6 +2161,244 @@ async function executeTool(params: {
       } as ToolExecutionResult
     }
 
+    case "debug_knowledge_search": {
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      const rawQuery = asString(args?.query, "query")
+      const query = normalizeSearchQuery(rawQuery)
+      const maxResults = asLimit(args?.max_results, 10)
+
+      const apiResponse = await fetch(KNOWLEDGE_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": KNOWLEDGE_API_KEY,
+        },
+        body: JSON.stringify({
+          company_id: defaultCompanyId,
+          kb_id: resolvedKbId,
+          subject: query,
+          body: "",
+          enable_hybrid: true,
+          max_results: maxResults,
+          detect_language: false,
+          include_examples: false,
+        })
+      })
+
+      if (!apiResponse.ok) {
+        throw new Error(`Wissenssuche-API antwortete mit ${apiResponse.status}`)
+      }
+
+      const apiData = await apiResponse.json()
+      const meta = apiData.search_metadata || {}
+      const chunks = (apiData.kb_results || []).slice(0, maxResults)
+
+      // Build a human-readable verdict so the agent doesn't have to recompute the math.
+      const verdicts: string[] = []
+      if (chunks.length === 0) {
+        const raw = meta.total_raw_results ?? 0
+        const minThr = meta.min_relevance_threshold ?? 0.25
+        const droppedThr = meta.dropped_below_threshold ?? 0
+        const droppedAmb = meta.dropped_ambiguous_low_sim ?? 0
+        verdicts.push(
+          `0 chunks returned: ${raw} raw hits → ${meta.deduplicated_chunks ?? 0} dedup → ${droppedThr} dropped < ${minThr} threshold, ${droppedAmb} dropped by ambiguous floor.`
+        )
+        if (raw === 0) {
+          verdicts.push("Keine einzige Vector/Hybrid/Graph-Channel hat überhaupt Treffer geliefert. Embedding-Mismatch — der Inhalt ist semantisch sehr weit weg von der Anfrage. Probiere search_chunks_by_text mit Schlüsselwörtern aus der Anfrage.")
+        } else if (droppedThr > 0 || droppedAmb > 0) {
+          verdicts.push(`Treffer waren da, wurden aber gefiltert. Wenn der erwartete Chunk dabei war: Fakt-Wording schärfen oder explizit zur Anfrage passenden Fakt anlegen.`)
+        }
+      } else {
+        const top = chunks[0]
+        const topTheme = top.community_theme ? `community '${top.community_theme}' (cid=${top.community_id})` : `cid=${top.community_id ?? "—"}`
+        const topConf = top.confidence || "(no confidence — pure vector hit)"
+        verdicts.push(
+          `Top result: ${topTheme} at sim=${(top.similarity ?? 0).toFixed(3)} via ${top.search_source} — ${topConf}.`
+        )
+
+        // Communities represented in top-N
+        const communities = new Set<number>()
+        for (const c of chunks) if (c.community_id != null) communities.add(c.community_id)
+        if (communities.size === 1 && chunks.length >= 3) {
+          verdicts.push(`Alle ${chunks.length} Top-Treffer aus DERSELBEN Community — der Suche fehlt evtl. thematische Breite. Wenn dem Kunden hier was anderes wichtiger ist, neuen Fakt im richtigen Cluster.`)
+        }
+
+        // Confidence overview
+        const confCounts: Record<string, number> = {}
+        for (const c of chunks) {
+          const k = c.confidence || "(none)"
+          confCounts[k] = (confCounts[k] || 0) + 1
+        }
+        const confSummary = Object.entries(confCounts).map(([k, v]) => `${k}:${v}`).join(", ")
+        verdicts.push(`Confidence-Verteilung: ${confSummary}`)
+
+        if ((meta.dropped_ambiguous_low_sim ?? 0) > 0) {
+          verdicts.push(`${meta.dropped_ambiguous_low_sim} ambiguous-Hits unter ${meta.ambiguous_min_similarity ?? 0.40} wurden gefiltert.`)
+        }
+      }
+
+      return {
+        result: {
+          knowledge_base_id: resolvedKbId,
+          query,
+          verdict: verdicts.join(" "),
+          search_metadata: {
+            queries: meta.queries || [],
+            total_raw_results: meta.total_raw_results ?? 0,
+            deduplicated_chunks: meta.deduplicated_chunks ?? 0,
+            dropped_below_threshold: meta.dropped_below_threshold ?? 0,
+            dropped_ambiguous_low_sim: meta.dropped_ambiguous_low_sim ?? 0,
+            min_relevance_threshold: meta.min_relevance_threshold ?? 0.25,
+            ambiguous_min_similarity: meta.ambiguous_min_similarity ?? 0.40,
+            returned_chunks: chunks.length,
+            errors: meta.errors ?? 0,
+            hybrid_enabled: meta.hybrid_enabled ?? true,
+            graph_chunks_found: meta.graph_chunks_found ?? 0,
+            graph_entities_matched: meta.graph_entities_matched || [],
+          },
+          chunks: chunks.map((c: any) => ({
+            chunk_id: c.chunk_id,
+            similarity: c.similarity,
+            search_source: c.search_source,
+            community_id: c.community_id,
+            community_theme: c.community_theme,
+            confidence: c.confidence,
+            graph_entity: c.graph_entity,
+            graph_hop: c.graph_hop,
+            source_name: c.source_name,
+            chunk_preview: clip(String(c.chunk_content || ""), 200),
+            matched_facts: (c.matched_facts || []).slice(0, 5),
+          })),
+        }
+      } as ToolExecutionResult
+    }
+
+    case "search_chunks_by_text": {
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      const query = asString(args?.query, "query").trim()
+      const limit = asLimit(args?.limit, 20)
+
+      if (query.length < 2) {
+        throw new Error("query muss mindestens 2 Zeichen haben")
+      }
+
+      // ILIKE on document_chunks.content, scoped to documents in this KB.
+      // We can't filter document_chunks directly by knowledge_base_id (column
+      // doesn't exist), so we filter by company + then check via document join.
+      // Easier: join via knowledge_items.source_chunk → kb_id.
+      // Pragmatic path: get all chunk_ids that have at least one fact in this KB,
+      // then ilike-search those chunks.
+      const { data: kiRows, error: kiErr } = await authClient
+        .from("knowledge_items")
+        .select("source_chunk")
+        .eq("knowledge_base_id", resolvedKbId)
+        .not("source_chunk", "is", null)
+        .limit(2000)
+
+      if (kiErr) {
+        throw new Error(`Could not list KB chunks: ${kiErr.message}`)
+      }
+
+      const kbChunkIds = Array.from(new Set((kiRows || []).map((r: any) => r.source_chunk).filter(Boolean)))
+      if (kbChunkIds.length === 0) {
+        return {
+          result: { knowledge_base_id: resolvedKbId, query, count: 0, chunks: [] }
+        } as ToolExecutionResult
+      }
+
+      // Search in batches of 200 to keep URL short
+      const matches: any[] = []
+      for (let i = 0; i < kbChunkIds.length && matches.length < limit; i += 200) {
+        const slice = kbChunkIds.slice(i, i + 200)
+        const { data, error } = await authClient
+          .from("document_chunks")
+          .select("id, content, content_position, document_id, documents:document_id(file_name, title)")
+          .in("id", slice)
+          .ilike("content", `%${query}%`)
+          .limit(limit - matches.length)
+        if (!error && Array.isArray(data)) {
+          matches.push(...data)
+        }
+      }
+
+      // Fact counts per matching chunk
+      const matchIds = matches.map((m: any) => m.id)
+      const factCounts: Record<string, number> = {}
+      if (matchIds.length > 0) {
+        const { data: factRows } = await authClient
+          .from("knowledge_items")
+          .select("source_chunk")
+          .in("source_chunk", matchIds)
+          .eq("knowledge_base_id", resolvedKbId)
+        for (const r of (factRows || []) as any[]) {
+          factCounts[r.source_chunk] = (factCounts[r.source_chunk] || 0) + 1
+        }
+      }
+
+      return {
+        result: {
+          knowledge_base_id: resolvedKbId,
+          query,
+          count: matches.length,
+          chunks: matches.slice(0, limit).map((c: any) => ({
+            chunk_id: c.id,
+            content_preview: clip(String(c.content || ""), 220),
+            content_position: c.content_position,
+            document_id: c.document_id,
+            document_name: c.documents?.title || c.documents?.file_name || null,
+            fact_count: factCounts[c.id] || 0,
+          })),
+        }
+      } as ToolExecutionResult
+    }
+
+    case "search_facts_by_text": {
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      const query = asString(args?.query, "query").trim()
+      const factType = typeof args?.fact_type === "string" ? args.fact_type.trim() : null
+      const sourceFilter = typeof args?.source_filter === "string" ? args.source_filter.trim() : null
+      const limit = asLimit(args?.limit, 30)
+
+      if (query.length < 2) {
+        throw new Error("query muss mindestens 2 Zeichen haben")
+      }
+
+      let q = authClient
+        .from("knowledge_items")
+        .select("id, content, question, fact_type, source_name, source_chunk, created_at")
+        .eq("knowledge_base_id", resolvedKbId)
+        .or(`content.ilike.%${query}%,question.ilike.%${query}%`)
+        .order("created_at", { ascending: false })
+        .limit(limit)
+
+      if (factType) q = q.eq("fact_type", factType)
+      if (sourceFilter) q = q.ilike("source_name", `%${sourceFilter}%`)
+
+      const { data, error } = await q
+      if (error) {
+        throw new Error(`Fakten-Suche fehlgeschlagen: ${error.message}`)
+      }
+
+      return {
+        result: {
+          knowledge_base_id: resolvedKbId,
+          query,
+          fact_type: factType,
+          source_filter: sourceFilter,
+          count: (data || []).length,
+          facts: (data || []).map((f: any) => ({
+            id: f.id,
+            content: clip(String(f.content || ""), 280),
+            question: clip(String(f.question || ""), 220),
+            fact_type: f.fact_type,
+            source_name: f.source_name,
+            source_chunk: f.source_chunk,
+            created_at: f.created_at,
+          })),
+        }
+      } as ToolExecutionResult
+    }
+
     case "get_chunk_details": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
       const chunkId = asString(args?.chunk_id, "chunk_id")
@@ -3319,11 +3563,22 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
       const searchResults: Array<{
         query: string
         variant_type: string
-        top_results: Array<{ content: string; similarity: number | null; id: string | null }>
+        top_results: Array<{
+          content: string
+          similarity: number | null
+          id: string | null
+          search_source?: string | null
+          community_id?: number | null
+          community_theme?: string | null
+          confidence?: string | null
+        }>
         found_in_top3: boolean
         found_in_top5: boolean
         best_match_position: number | null
         best_match_score: number | null
+        best_match_community_theme: string | null
+        best_match_confidence: string | null
+        best_match_search_source: string | null
       }> = []
 
       const variantTypes = ["original", "umgangssprachlich", "keyword", "formal", "indirekt"]
@@ -3359,6 +3614,10 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
                 id: item.chunk_id,
                 content: item.ki_content || item.chunk_content,
                 similarity: item.similarity,
+                search_source: item.search_source ?? null,
+                community_id: item.community_id ?? null,
+                community_theme: item.community_theme ?? null,
+                confidence: item.confidence ?? null,
               }))
             }
           }
@@ -3405,6 +3664,9 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
         // Check if expected fact is in results
         let bestMatchPos: number | null = null
         let bestMatchScore: number | null = null
+        let bestMatchTheme: string | null = null
+        let bestMatchConfidence: string | null = null
+        let bestMatchSource: string | null = null
 
         for (let j = 0; j < results.length; j++) {
           const content = String(results[j]?.content || "")
@@ -3426,6 +3688,9 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
           if (matchById || matchBySubstring || matchByKeywords) {
             bestMatchPos = j + 1
             bestMatchScore = results[j]?.similarity ?? null
+            bestMatchTheme = results[j]?.community_theme ?? null
+            bestMatchConfidence = results[j]?.confidence ?? null
+            bestMatchSource = results[j]?.search_source ?? null
             break
           }
         }
@@ -3436,12 +3701,19 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
           top_results: results.slice(0, 3).map((r: any) => ({
             content: clip(String(r.content || ""), 120),
             similarity: r.similarity ?? null,
-            id: r.id || null
+            id: r.id || null,
+            search_source: r.search_source ?? null,
+            community_id: r.community_id ?? null,
+            community_theme: r.community_theme ?? null,
+            confidence: r.confidence ?? null,
           })),
           found_in_top3: bestMatchPos !== null && bestMatchPos <= 3,
           found_in_top5: bestMatchPos !== null && bestMatchPos <= 5,
           best_match_position: bestMatchPos,
-          best_match_score: bestMatchScore
+          best_match_score: bestMatchScore,
+          best_match_community_theme: bestMatchTheme,
+          best_match_confidence: bestMatchConfidence,
+          best_match_search_source: bestMatchSource,
         })
       }
 
@@ -3462,14 +3734,45 @@ Beispiel: ["Was muss ich zahlen?", "Preis Kosten Tarif", "Bitte teilen Sie mir d
       if (!passed) {
         const failedVariants = searchResults.filter(r => !r.found_in_top3)
         for (const fv of failedVariants) {
-          const topHit = fv.top_results?.[0]?.content || null
+          const topHit = fv.top_results?.[0]
+          const topHitContent = topHit?.content || null
           if (!fv.found_in_top5) {
-            const hint = topHit ? ` Stattdessen gefunden: "${topHit.slice(0, 60)}..."` : " Keine Ergebnisse."
-            recommendations.push(`Variante "${fv.variant_type}" (${fv.query.slice(0, 40)}): Erwarteter Fakt nicht in Top-5.${hint}`)
+            const hint = topHitContent ? ` Stattdessen gefunden: "${topHitContent.slice(0, 60)}..."` : " Keine Ergebnisse."
+            const themeHint = topHit?.community_theme ? ` (Community: ${topHit.community_theme})` : ""
+            recommendations.push(`Variante "${fv.variant_type}" (${fv.query.slice(0, 40)}): Erwarteter Fakt nicht in Top-5.${hint}${themeHint}`)
           } else {
-            recommendations.push(`Variante "${fv.variant_type}": Fakt in Position ${fv.best_match_position}, aber nicht in Top-3. Fakt-Formulierung optimieren.`)
+            const themeHint = fv.best_match_community_theme ? ` Community: ${fv.best_match_community_theme}.` : ""
+            const confHint = fv.best_match_confidence ? ` Confidence: ${fv.best_match_confidence}.` : ""
+            recommendations.push(`Variante "${fv.variant_type}": Fakt in Position ${fv.best_match_position}, aber nicht in Top-3.${themeHint}${confHint} Fakt-Formulierung schärfen.`)
           }
         }
+
+        // Theme-mismatch hint: top-1 hits land consistently in a DIFFERENT community than the matched fact
+        const matchedThemes = searchResults
+          .map(r => r.best_match_community_theme)
+          .filter(Boolean) as string[]
+        const topThemes = searchResults
+          .map(r => r.top_results?.[0]?.community_theme)
+          .filter(Boolean) as string[]
+        if (matchedThemes.length >= 2 && topThemes.length >= 2) {
+          const matchedSet = new Set(matchedThemes)
+          const topSet = new Set(topThemes)
+          const overlap = [...matchedSet].some(t => topSet.has(t))
+          if (!overlap) {
+            recommendations.push(
+              `Theme-Mismatch: Erwarteter Fakt liegt in Community "${matchedThemes[0]}", die Suche landet aber konsistent in "${topThemes[0]}". Möglicherweise gehört der Fakt thematisch in eine andere Cluster, oder die Suche braucht mehr Vokabular zur "${matchedThemes[0]}"-Community.`
+            )
+          }
+        }
+
+        // Ambiguous-floor hint
+        const ambigHits = searchResults.filter(r => r.best_match_confidence === "ambiguous")
+        if (ambigHits.length >= 2) {
+          recommendations.push(
+            `${ambigHits.length} Varianten finden den Fakt nur via "ambiguous" Cross-Document-Inferenz — direkter extracted-Fakt fehlt. Erwäge add_fact_to_chunk im richtigen Quellchunk mit explizitem Bezug zur Anfrage.`
+          )
+        }
+
         if (avgScore < 0.45) {
           recommendations.push("Durchschnittlicher Score niedrig. Erwäge Schatten-Fakten oder Synonym-Enrichment.")
         }
