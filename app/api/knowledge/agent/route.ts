@@ -389,6 +389,43 @@ function requireKnowledgeBaseId(maybeId: string | null) {
   return maybeId
 }
 
+// Cross-tenant guard: every tool that accepts a kb_id from the LLM must
+// verify that the KB actually belongs to the calling agent's company before
+// touching any data. This matters specifically for the cross-agent path
+// (X-Cross-Agent-Secret) where authClient = serviceClient bypasses RLS.
+async function assertKbBelongsToCompany(
+  client: any,
+  kbId: string,
+  defaultCompanyId: string | null,
+  userId: string | null
+): Promise<{ company_id: string | null; sharing: string | null }> {
+  const { data: kb, error } = await client
+    .from("knowledge_bases")
+    .select("id, company_id, sharing, user_id")
+    .eq("id", kbId)
+    .maybeSingle()
+
+  if (error || !kb) {
+    throw new Error(`Wissensdatenbank ${kbId.slice(0, 8)} nicht gefunden oder nicht zugreifbar.`)
+  }
+
+  // Cross-agent mode: STRICT — kb must belong to the caller's company.
+  if (defaultCompanyId) {
+    if (kb.company_id !== defaultCompanyId) {
+      throw new Error(
+        `Zugriff verweigert: Wissensdatenbank ${kbId.slice(0, 8)} gehört nicht zur anfragenden Company.`
+      )
+    }
+    return { company_id: kb.company_id, sharing: kb.sharing }
+  }
+
+  // User session mode: allow if owner OR public sharing.
+  if (kb.sharing === "public") return { company_id: kb.company_id, sharing: kb.sharing }
+  if (userId && kb.user_id === userId) return { company_id: kb.company_id, sharing: kb.sharing }
+  // Otherwise let RLS speak: if a follow-up query fails, that's the right answer.
+  return { company_id: kb.company_id, sharing: kb.sharing }
+}
+
 function buildToolLabel(toolName: string, args: any) {
   switch (toolName as KnowledgeAgentToolName) {
     case "web_search":
@@ -2163,6 +2200,7 @@ async function executeTool(params: {
 
     case "debug_knowledge_search": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(serviceClient, resolvedKbId, defaultCompanyId, userId)
       const rawQuery = asString(args?.query, "query")
       const query = normalizeSearchQuery(rawQuery)
       const maxResults = asLimit(args?.max_results, 10)
@@ -2275,6 +2313,7 @@ async function executeTool(params: {
 
     case "search_chunks_by_text": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(serviceClient, resolvedKbId, defaultCompanyId, userId)
       const query = asString(args?.query, "query").trim()
       const limit = asLimit(args?.limit, 20)
 
@@ -2354,6 +2393,7 @@ async function executeTool(params: {
 
     case "search_facts_by_text": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(serviceClient, resolvedKbId, defaultCompanyId, userId)
       const query = asString(args?.query, "query").trim()
       const factType = typeof args?.fact_type === "string" ? args.fact_type.trim() : null
       const sourceFilter = typeof args?.source_filter === "string" ? args.source_filter.trim() : null
@@ -3475,6 +3515,7 @@ async function executeTool(params: {
 
     case "verify_fact_findability": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(serviceClient, resolvedKbId, defaultCompanyId, userId)
       const referenceQuestion = asString(args?.reference_question, "reference_question")
       const expectedContent = asString(args?.expected_fact_content, "expected_fact_content")
       const expectedFactId = asOptionalString(args?.expected_fact_id)
