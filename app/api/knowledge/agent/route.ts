@@ -146,7 +146,7 @@ const openai = new OpenAI({
 const AGENT_MODEL =
   process.env.KNOWLEDGE_AGENT_MODEL ||
   process.env.OPENAI_MODEL ||
-  "gpt-5.4-2026-03-05"
+  "gpt-5.5-2026-04-23"
 
 const KNOWLEDGE_API_URL = process.env.KNOWLEDGE_API_URL || "https://outlook-ai-frontend-v3-2s1l.onrender.com/api/knowledge/retrieve"
 const KNOWLEDGE_API_KEY = process.env.KNOWLEDGE_API_KEY || "vI+AipWnKo3EqyBRHblIx2lcVF3WxXZDSAB9w8tFh5M="
@@ -172,7 +172,7 @@ async function emitKickoffTextFromModel(params: {
       model: AGENT_MODEL,
       stream: true,
       tool_choice: "none",
-      temperature: 0.1,
+      // GPT-5.5 only supports the default temperature (1).
       max_tokens: 42,
       messages: [
         {
@@ -1708,6 +1708,67 @@ async function loadConversationHistory(params: {
   }
 }
 
+// ── Mail-Agent Skills (feature 002) — proxy to the canonical skill service ──
+// The Support-Backend (`app/routers/skills.py`) owns skill CRUD; the
+// Knowledge-Agent never reimplements validation/limits, it only forwards.
+const SUPPORT_BACKEND_URL =
+  process.env.SUPPORT_BACKEND_URL ||
+  "https://outlook-ai-frontend-v3-2s1l.onrender.com"
+const SUPPORT_BACKEND_API_KEY = process.env.SUPPORT_BACKEND_API_KEY || ""
+
+async function callSkillsApi(opts: {
+  method: "GET" | "POST" | "PATCH" | "DELETE"
+  path: string
+  companyId: string
+  userId?: string
+  query?: Record<string, string | undefined>
+  body?: any
+}): Promise<any> {
+  if (!SUPPORT_BACKEND_API_KEY) {
+    throw new Error("SUPPORT_BACKEND_API_KEY ist nicht konfiguriert — Skill-Verwaltung nicht verfügbar.")
+  }
+  const url = new URL(`${SUPPORT_BACKEND_URL}${opts.path}`)
+  url.searchParams.set("company_id", opts.companyId)
+  if (opts.userId) url.searchParams.set("user_id", opts.userId)
+  for (const [k, v] of Object.entries(opts.query || {})) {
+    if (v != null) url.searchParams.set(k, v)
+  }
+  const res = await fetch(url.toString(), {
+    method: opts.method,
+    headers: { "Content-Type": "application/json", "X-API-Key": SUPPORT_BACKEND_API_KEY },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  })
+  const text = await res.text()
+  let data: any = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = { detail: text }
+  }
+  if (!res.ok) {
+    const msg = data?.reason || data?.detail || data?.error || `HTTP ${res.status}`
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg))
+  }
+  return data
+}
+
+/** Resolve the company's active Mail-Agent configuration id (skill target). */
+async function resolveActiveMailConfigId(
+  serviceClient: any,
+  companyId: string | null,
+): Promise<string | null> {
+  if (!companyId) return null
+  const { data } = await serviceClient
+    .from("ai_agent_configurations")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data?.id || null
+}
+
 async function executeTool(params: {
   toolName: string
   args: any
@@ -1732,6 +1793,75 @@ async function executeTool(params: {
   } = params
 
   switch (toolName as KnowledgeAgentToolName) {
+    // ── Mail-Agent Skills (feature 002) ──────────────────────────────
+    case "list_skills": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skills nicht verfügbar.")
+      const data = await callSkillsApi({ method: "GET", path: "/api/skills", companyId: defaultCompanyId })
+      const items: any[] = Array.isArray(data?.items) ? data.items : []
+      const q = asOptionalString(args?.query)?.toLowerCase()
+      const filtered = q
+        ? items.filter((s: any) =>
+            `${s.name} ${s.description} ${(s.tags || []).join(" ")}`.toLowerCase().includes(q),
+          )
+        : items
+      return { skills: filtered, count: filtered.length }
+    }
+    case "create_skill": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skill kann nicht angelegt werden.")
+      const name = asString(args?.name, "name")
+      const description = asString(args?.description, "description")
+      const body = asString(args?.body, "body")
+      const tags = Array.isArray(args?.tags) ? args.tags.filter((t: any) => typeof t === "string") : []
+      const mailConfigId = await resolveActiveMailConfigId(serviceClient, defaultCompanyId)
+      const payload: any = { name, description, body, tags }
+      if (mailConfigId) payload.assign_to_agent_ids = [mailConfigId]
+      const data = await callSkillsApi({
+        method: "POST",
+        path: "/api/skills",
+        companyId: defaultCompanyId,
+        userId,
+        body: payload,
+      })
+      return {
+        created: true,
+        skill: data?.skill,
+        assigned_to_mail_agent: !!mailConfigId,
+        quality_check: data?.quality_check,
+        token_warnings: data?.token_warnings,
+      }
+    }
+    case "update_skill": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const skillId = asString(args?.skill_id, "skill_id")
+      const patch: any = {}
+      if (asOptionalString(args?.name)) patch.name = args.name
+      if (asOptionalString(args?.description)) patch.description = args.description
+      if (asOptionalString(args?.body)) patch.body = args.body
+      if (Array.isArray(args?.tags)) patch.tags = args.tags.filter((t: any) => typeof t === "string")
+      if (asOptionalString(args?.change_summary)) patch.change_summary = args.change_summary
+      const data = await callSkillsApi({
+        method: "PATCH",
+        path: `/api/skills/${skillId}`,
+        companyId: defaultCompanyId,
+        userId,
+        body: patch,
+      })
+      return { updated: true, skill: data?.skill, token_warnings: data?.token_warnings }
+    }
+    case "assign_skill": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const skillId = asString(args?.skill_id, "skill_id")
+      const mailConfigId = await resolveActiveMailConfigId(serviceClient, defaultCompanyId)
+      if (!mailConfigId) throw new Error("Keine aktive Mail-Konfiguration gefunden, der die Skill zugewiesen werden könnte.")
+      const data = await callSkillsApi({
+        method: "POST",
+        path: `/api/skills/${skillId}/assignments`,
+        companyId: defaultCompanyId,
+        userId,
+        body: { agent_config_id: mailConfigId, enabled: true },
+      })
+      return { assigned: true, assignment: data }
+    }
     case "web_search": {
       const query = asString(args?.query, "query")
       const maxResults = asLimit(args?.max_results, 5, 10)
@@ -2460,7 +2590,10 @@ async function executeTool(params: {
           chunk: {
             id: chunk.id,
             position: chunk.content_position,
-            content: clip(String(chunk.content || ""), 1400),
+            // Vollstaendiger Chunk-Text (NICHT clippen) — der Agent braucht
+            // den kompletten aktuellen Inhalt, um update_chunk_content sicher
+            // anwenden zu koennen, ohne bestehendes Wissen zu ueberschreiben.
+            content: String(chunk.content || ""),
             content_length: String(chunk.content || "").length,
             document_id: chunk.document_id
           },
@@ -3451,7 +3584,7 @@ async function executeTool(params: {
             }
           ],
           max_tokens: 2000,
-          temperature: 0.2
+          // GPT-5.5 only supports the default temperature (1).
         })
 
         const description = visionResponse.choices?.[0]?.message?.content || "Bildbeschreibung konnte nicht erstellt werden."
@@ -4030,7 +4163,7 @@ async function runAgentWorkflow(params: {
       messages: conversation,
       tools: KNOWLEDGE_AGENT_TOOLS as any,
       tool_choice: "auto",
-      temperature: 0.2,
+      // GPT-5.5 only supports the default temperature (1).
       stream: true
     })
 
