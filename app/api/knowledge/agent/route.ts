@@ -1812,9 +1812,13 @@ async function executeTool(params: {
       const description = asString(args?.description, "description")
       const body = asString(args?.body, "body")
       const tags = Array.isArray(args?.tags) ? args.tags.filter((t: any) => typeof t === "string") : []
-      const mailConfigId = await resolveActiveMailConfigId(serviceClient, defaultCompanyId)
+      // Skill gehört (organisatorisch) zu einer Datenbank: explizit angegeben
+      // oder die aktuell aktive Datenbank. Ohne aktive DB → firmenweit (null).
+      const kbId = asOptionalString(args?.knowledge_base_id) || activeKnowledgeBaseId || null
       const payload: any = { name, description, body, tags }
-      if (mailConfigId) payload.assign_to_agent_ids = [mailConfigId]
+      if (kbId) payload.knowledge_base_id = kbId
+      // KEINE Auto-Zuweisung an einen Agenten: Anlegen passiert hier (unter der
+      // Datenbank), das Freischalten pro Mail-Agent passiert in der SupportAI.
       const data = await callSkillsApi({
         method: "POST",
         path: "/api/skills",
@@ -1825,7 +1829,9 @@ async function executeTool(params: {
       return {
         created: true,
         skill: data?.skill,
-        assigned_to_mail_agent: !!mailConfigId,
+        knowledge_base_id: kbId,
+        scope: kbId ? "datenbank" : "firmenweit",
+        next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
         quality_check: data?.quality_check,
         token_warnings: data?.token_warnings,
       }
