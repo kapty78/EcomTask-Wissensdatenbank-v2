@@ -18,6 +18,12 @@ const ChatInterface = dynamic(
   { ssr: false }
 )
 
+// Skills-Ansicht (Workflow-Pakete unter einer Datenbank)
+const SkillsView = dynamic(
+  () => import('@/components/knowledge/SkillsView'),
+  { ssr: false }
+)
+
 // Dynamischer Import für Knowledge Graph
 const KnowledgeGraphView = dynamic(
   () => import('@/components/knowledge/KnowledgeGraphView'),
@@ -37,6 +43,7 @@ import {
   Upload,
   List,
   Search,
+  Workflow,
   Calendar,
   Filter,
   X,
@@ -1953,7 +1960,7 @@ const ChunkDetailsModal = memo(({
         </div>
 
         {/* Footer - Informationen */}
-        <div className="p-2 sm:p-3 border-t border-white/10 shrink-0 bg-[#1a1a1a]">
+        <div className="p-2 sm:p-3 shrink-0 bg-[#1a1a1a]">
           {/* Desktop Layout - horizontal */}
           <div className="hidden lg:flex justify-between items-center">
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -2058,10 +2065,10 @@ export default function KnowledgeComponentDashboard() {
   >(null)
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<any | null>(null)
   const [companyName, setCompanyName] = useState<string>("")
-  const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph'>('upload')
+  const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph' | 'skills'>('upload')
   const [showGraphView, setShowGraphView] = useState(false)
   // Only stretch to full height when entries or search tabs need scrolling
-  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || showGraphView)
+  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || activeTab === 'skills' || showGraphView)
   const [knowledgeItems, setKnowledgeItems] = useState<any[]>([])
   const [loadingItems, setLoadingItems] = useState(false)
   
@@ -4257,6 +4264,17 @@ export default function KnowledgeComponentDashboard() {
             <Search className="size-3.5 sm:size-4 flex-shrink-0" />
             <span>Wissenssuche</span>
           </button>
+          <button
+            onClick={() => setActiveTab('skills')}
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+              activeTab === 'skills'
+                ? 'bg-primary text-foreground shadow-lg'
+                : 'bg-muted text-muted-foreground hover:bg-secondary/80'
+            }`}
+          >
+            <Workflow className="size-3.5 sm:size-4 flex-shrink-0" />
+            <span>Skills</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -4847,6 +4865,23 @@ export default function KnowledgeComponentDashboard() {
                           <div className="flex items-center justify-center h-48 px-4">
                             <p className="text-sm text-muted-foreground text-center">
                               Bitte wählen Sie <span className="xl:hidden">oben</span><span className="hidden xl:inline">links</span> eine Wissensdatenbank aus, um zu suchen.
+                            </p>
+                          </div>
+                        )}
+
+                        {activeTab === 'skills' && selectedKnowledgeBaseId && (
+                          <div className="flex flex-col flex-1 overflow-hidden min-h-0">
+                            <SkillsView
+                              knowledgeBaseId={selectedKnowledgeBaseId}
+                              knowledgeBaseName={selectedKnowledgeBase?.title || selectedKnowledgeBase?.name}
+                            />
+                          </div>
+                        )}
+
+                        {activeTab === 'skills' && !selectedKnowledgeBaseId && (
+                          <div className="flex items-center justify-center h-48 px-4">
+                            <p className="text-sm text-muted-foreground text-center">
+                              Bitte wählen Sie <span className="xl:hidden">oben</span><span className="hidden xl:inline">links</span> eine Wissensdatenbank aus, um deren Skills zu verwalten.
                             </p>
                           </div>
                         )}
