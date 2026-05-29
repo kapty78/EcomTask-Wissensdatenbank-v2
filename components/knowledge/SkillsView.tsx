@@ -172,7 +172,7 @@ export default function SkillsView({ knowledgeBaseId, knowledgeBaseName }: Skill
         ) : skills.length === 0 ? (
           <div className="rounded-lg border border-white/10 bg-[#1e1e1e] px-4 py-6 text-center text-xs text-muted-foreground">
             Noch keine Skills unter dieser Datenbank. Lege einen mehrschrittigen Workflow an
-            (z.B. „Bestellungen von Böttcher abwickeln").
+            (z.B. „Sammelbestellungen eines Großhändlers abwickeln").
           </div>
         ) : (
           skills.map((s) => (
@@ -219,7 +219,7 @@ export default function SkillsView({ knowledgeBaseId, knowledgeBaseName }: Skill
                 <input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="boettcher-bestellung"
+                  placeholder="grosshaendler-bestellung"
                   disabled={isEditing}
                   className="w-full rounded-lg border border-white/10 bg-[#1e1e1e] px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-pink-500/50 focus:outline-none disabled:opacity-60"
                 />
@@ -229,7 +229,7 @@ export default function SkillsView({ knowledgeBaseId, knowledgeBaseName }: Skill
                 <textarea
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Aufrufen bei Standard-Bestellungen der Böttcher AG (No-Reply-Mails mit Artikelliste)."
+                  placeholder="Aufrufen bei Sammelbestellungen eines Großhändlers (No-Reply-Mails mit Artikelliste)."
                   className="min-h-[60px] w-full rounded-lg border border-white/10 bg-[#1e1e1e] px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-pink-500/50 focus:outline-none"
                 />
                 <div className="text-[10.5px] text-muted-foreground">{form.description.length}/500 Zeichen</div>
@@ -248,7 +248,7 @@ export default function SkillsView({ knowledgeBaseId, knowledgeBaseName }: Skill
                 <input
                   value={form.tags}
                   onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-                  placeholder="bestellung, boettcher"
+                  placeholder="bestellung, grosshaendler"
                   className="w-full rounded-lg border border-white/10 bg-[#1e1e1e] px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-pink-500/50 focus:outline-none"
                 />
               </div>
