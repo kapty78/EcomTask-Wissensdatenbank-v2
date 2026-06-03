@@ -10,8 +10,12 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: This is a Next.js project — `lib/` is the SOURCE directory (e.g.
+# lib/knowledge-agent/*), NOT a Python build dir. The bare `lib/`/`lib64/`
+# entries came from a Python .gitignore template and must stay disabled,
+# otherwise the agent source silently drops out of version control.
+# lib/
+# lib64/
 parts/
 sdist/
 var/

@@ -8,6 +8,8 @@ import { Database } from "@/supabase/types"
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
+import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
+import { generateFragenprompt } from "@/lib/knowledge-agent/question-prompt"
 import { processDocument } from "@/lib/cursor-documents/processing"
 
 type AgentHistoryMessage = {
@@ -502,6 +504,10 @@ function buildToolLabel(toolName: string, args: any) {
       return `Anhang analysieren: ${clip(String(args?.attachment_name || args?.attachment_url || ""), 44)}`
     case "verify_fact_findability":
       return `Auffindbarkeit prüfen: "${clip(String(args?.reference_question || ""), 52)}"`
+    case "get_knowledge_overview":
+      return "KB-Überblick laden"
+    case "generate_question_prompt":
+      return "Fragenprompt-Vorschlag erzeugen"
     default:
       return `Tool ausführen: ${toolName}`
   }
@@ -2214,6 +2220,93 @@ async function executeTool(params: {
             created_at: doc.created_at || null
           }))
         }
+      } as ToolExecutionResult
+    }
+
+    case "get_knowledge_overview": {
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(authClient, resolvedKbId, defaultCompanyId, userId)
+
+      const overview = await buildKbOverview({
+        serviceClient,
+        knowledgeBaseId: resolvedKbId,
+        companyId: defaultCompanyId,
+        maxThemes: asLimit(args?.max_themes, 25, 100),
+        refresh: args?.refresh === true,
+        backend: { url: SUPPORT_BACKEND_URL, apiKey: KNOWLEDGE_API_KEY },
+      })
+
+      return { result: overview } as ToolExecutionResult
+    }
+
+    case "generate_question_prompt": {
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      await assertKbBelongsToCompany(authClient, resolvedKbId, defaultCompanyId, userId)
+
+      const problemContext = asOptionalString(args?.problem_context)
+      const exampleRequest = asOptionalString(args?.example_customer_request)
+      const style = asOptionalString(args?.style) === "detailed" ? "detailed" : "compact"
+
+      const overview = await buildKbOverview({
+        serviceClient,
+        knowledgeBaseId: resolvedKbId,
+        companyId: defaultCompanyId,
+        maxThemes: 30,
+        refresh: false,
+        backend: { url: SUPPORT_BACKEND_URL, apiKey: KNOWLEDGE_API_KEY },
+      })
+
+      // Best-effort coverage probe: does the example request actually retrieve
+      // anything? A zero-hit example is strong evidence of non-KB data.
+      let coverageNote: string | null = null
+      if (exampleRequest) {
+        try {
+          const probe = await fetch(KNOWLEDGE_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": KNOWLEDGE_API_KEY },
+            body: JSON.stringify({
+              company_id: defaultCompanyId,
+              kb_id: resolvedKbId,
+              subject: exampleRequest,
+              body: "",
+              enable_hybrid: true,
+              max_results: 4,
+              detect_language: true,
+            }),
+          })
+          if (probe.ok) {
+            const pj = await probe.json()
+            const hits = (pj.kb_results || []).filter(
+              (r: any) => (r.ki_content || r.chunk_content || "").trim().length > 5
+            )
+            coverageNote =
+              hits.length > 0
+                ? `Die Beispielanfrage liefert ${hits.length} substantielle KB-Treffer.`
+                : "Die Beispielanfrage liefert KEINE substantiellen KB-Treffer — Indiz für Nicht-KB-Daten oder eine Wissenslücke."
+          }
+        } catch {
+          coverageNote = null
+        }
+      }
+
+      const proposal = await generateFragenprompt({
+        openai,
+        model: AGENT_MODEL,
+        overview,
+        problemContext,
+        exampleCustomerRequest: exampleRequest,
+        coverageNote,
+        style,
+      })
+
+      return {
+        result: {
+          knowledge_base_id: resolvedKbId,
+          proposal,
+          as_of: overview.as_of,
+          persisted: false,
+          note: "Vorschlag — NICHT gespeichert. Zur Übernahme muss er bestätigt und über create_question_prompt (Mail-Agent) gespeichert werden.",
+        },
       } as ToolExecutionResult
     }
 
