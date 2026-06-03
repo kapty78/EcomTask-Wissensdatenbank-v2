@@ -121,7 +121,9 @@ export async function generateFragenprompt(opts: {
 
   const completion = await openai.chat.completions.create({
     model,
-    max_tokens: 1500,
+    // GPT-5.x reasoning models require max_completion_tokens (max_tokens is
+    // rejected). Generous cap so reasoning tokens don't starve the JSON output.
+    max_completion_tokens: 4000,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userParts.join("\n") },
