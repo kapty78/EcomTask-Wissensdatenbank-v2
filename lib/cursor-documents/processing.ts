@@ -436,6 +436,10 @@ export const processDocumentFile = async (
   } catch (error: any) {
     logger.error('Error in processDocumentFile:', error);
     await updateDocumentStatus(document.id, 'failed', 0, `Fehler bei der Verarbeitung: ${error.message}`, error.message);
+    // Surface the failure: callers await processDocument and otherwise report
+    // success/queued even though extraction/chunking/handoff failed. The API
+    // routes (cursor/upload, knowledge-agent) already catch and return errors.
+    throw error
   }
 }
 

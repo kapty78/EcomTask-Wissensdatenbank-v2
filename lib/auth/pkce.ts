@@ -70,6 +70,12 @@ function storage(): SafeStorage | null {
 
 const RECOVERY_VERIFIER_KEY = "supabase-recovery-verifier"
 
+// Max age of a stored recovery verifier. Supabase recovery links default to
+// ~1 hour, so the verifier must survive the email round-trip that long.
+// (Was referenced below but never declared → readRecoveryVerifier() threw a
+// ReferenceError and always returned null, silently breaking recovery.)
+const RECOVERY_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
+
 export function storeRecoveryVerifier(verifier: string) {
   try {
     localStorage.setItem(RECOVERY_VERIFIER_KEY, JSON.stringify({ verifier, ts: Date.now() }))
