@@ -61,6 +61,12 @@ export function buildServerEnv(
   if (!merged.KNOWLEDGE_AGENT_MODEL && merged.OPENAI_MODEL) {
     merged.KNOWLEDGE_AGENT_MODEL = merged.OPENAI_MODEL
   }
+  // Legacy-Alias: Pipeline-Auth lief frueher ueber die NEXT_PUBLIC_-Variante.
+  // Deployments, die nur den alten Namen gesetzt haben, bleiben funktionsfaehig.
+  // Precedence: der NEUE Name gewinnt, wenn beide gesetzt sind.
+  if (!merged.WISSENSBASIS_API_KEY && merged.NEXT_PUBLIC_WISSENSBASIS_API_KEY) {
+    merged.WISSENSBASIS_API_KEY = merged.NEXT_PUBLIC_WISSENSBASIS_API_KEY
+  }
   const parsed = ServerEnvSchema.safeParse(merged)
   if (!parsed.success) {
     const details = parsed.error.issues

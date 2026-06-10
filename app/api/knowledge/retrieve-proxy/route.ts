@@ -101,17 +101,38 @@ export async function POST(req: NextRequest) {
     })
 
     const text = await upstreamResponse.text()
+
+    // Upstream-FEHLER nie verbatim an den Browser durchreichen — Error-Bodies
+    // koennen Debug-Details oder reflektiertes Auth-Material enthalten.
+    // Details landen nur im Server-Log; der Client bekommt eine feste Form.
+    if (!upstreamResponse.ok) {
+      logger.error('retrieve-proxy: Upstream-Fehler', {
+        status: upstreamResponse.status,
+        body: text.slice(0, 500),
+        kb_id: kbId,
+      })
+      return NextResponse.json(
+        { error: 'Wissenssuche derzeit nicht verfuegbar' },
+        { status: upstreamResponse.status >= 500 ? 502 : 400 }
+      )
+    }
+
     let data: unknown = null
     try {
       data = text ? JSON.parse(text) : null
     } catch {
-      data = { detail: text }
+      logger.error('retrieve-proxy: Upstream lieferte kein JSON', { body: text.slice(0, 200) })
+      return NextResponse.json(
+        { error: 'Wissenssuche lieferte eine ungueltige Antwort' },
+        { status: 502 }
+      )
     }
-    return NextResponse.json(data, { status: upstreamResponse.status })
+    return NextResponse.json(data, { status: 200 })
   } catch (error: any) {
+    // Interne Fehlerdetails nur loggen, nicht an den Client geben.
     logger.error('retrieve-proxy: Unexpected error', error)
     return NextResponse.json(
-      { error: `Retrieve-Proxy Fehler: ${error.message}` },
+      { error: 'Retrieve-Proxy Fehler' },
       { status: 502 }
     )
   }
