@@ -10,10 +10,10 @@ import { NextResponse } from "next/server"
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
 import { cookies } from "next/headers"
 
-const SUPPORT_BACKEND_URL =
-  process.env.SUPPORT_BACKEND_URL ||
-  "https://outlook-ai-frontend-v3-2s1l.onrender.com"
-const SUPPORT_BACKEND_API_KEY = process.env.SUPPORT_BACKEND_API_KEY || ""
+import { env } from "@/lib/env"
+
+const SUPPORT_BACKEND_URL = env.SUPPORT_BACKEND_URL
+const SUPPORT_BACKEND_API_KEY = env.SUPPORT_BACKEND_API_KEY
 
 export interface SkillsAuth {
   userId: string
@@ -28,12 +28,6 @@ export async function resolveSkillsAuth(): Promise<SkillsAuth | NextResponse> {
   } = await authClient.auth.getUser()
   if (error || !user) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 })
-  }
-  if (!SUPPORT_BACKEND_API_KEY) {
-    return NextResponse.json(
-      { error: "SUPPORT_BACKEND_API_KEY ist nicht konfiguriert." },
-      { status: 500 },
-    )
   }
   const { data: profile } = await authClient
     .from("profiles")

@@ -73,11 +73,19 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
     setShowSearchField(false)
 
     try {
-      const response = await fetch('https://outlook-ai-frontend-v3-2s1l.onrender.com/api/knowledge/retrieve', {
+      // Key-Leak-Fix (WP-A5): Suche laeuft ueber den Server-Proxy, der den
+      // Support-Backend-Key serverseitig haelt — kein API-Key im Browser.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token
+      if (!accessToken) {
+        throw new Error('Keine aktive Sitzung — bitte neu anmelden.')
+      }
+
+      const response = await fetch('/api/knowledge/retrieve-proxy', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': 'vI+AipWnKo3EqyBRHblIx2lcVF3WxXZDSAB9w8tFh5M=',
+          'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           company_id: companyId,
@@ -176,7 +184,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
     } finally {
       setIsLoading(false)
     }
-  }, [searchQuery, knowledgeBaseId, userId, companyId, isLoading])
+  }, [searchQuery, knowledgeBaseId, userId, companyId, isLoading, supabase.auth])
 
   // Suche bei Enter (am Ende der Eingabe)
   const handleKeyPress = (e: React.KeyboardEvent) => {

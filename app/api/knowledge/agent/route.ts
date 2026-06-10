@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
 
 import { Database } from "@/supabase/types"
+import { env } from "@/lib/env"
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
@@ -143,15 +144,12 @@ type AgentRichContent = {
 }
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: env.OPENAI_API_KEY
 })
-const AGENT_MODEL =
-  process.env.KNOWLEDGE_AGENT_MODEL ||
-  process.env.OPENAI_MODEL ||
-  "gpt-5.5-2026-04-23"
+const AGENT_MODEL = env.KNOWLEDGE_AGENT_MODEL
 
-const KNOWLEDGE_API_URL = process.env.KNOWLEDGE_API_URL || "https://outlook-ai-frontend-v3-2s1l.onrender.com/api/knowledge/retrieve"
-const KNOWLEDGE_API_KEY = process.env.KNOWLEDGE_API_KEY || "vI+AipWnKo3EqyBRHblIx2lcVF3WxXZDSAB9w8tFh5M="
+const KNOWLEDGE_API_URL = env.KNOWLEDGE_API_URL
+const KNOWLEDGE_API_KEY = env.KNOWLEDGE_API_KEY
 
 function compact(text: string) {
   return text.replace(/\s+/g, " ").trim()
@@ -1717,10 +1715,8 @@ async function loadConversationHistory(params: {
 // ── Mail-Agent Skills (feature 002) — proxy to the canonical skill service ──
 // The Support-Backend (`app/routers/skills.py`) owns skill CRUD; the
 // Knowledge-Agent never reimplements validation/limits, it only forwards.
-const SUPPORT_BACKEND_URL =
-  process.env.SUPPORT_BACKEND_URL ||
-  "https://outlook-ai-frontend-v3-2s1l.onrender.com"
-const SUPPORT_BACKEND_API_KEY = process.env.SUPPORT_BACKEND_API_KEY || ""
+const SUPPORT_BACKEND_URL = env.SUPPORT_BACKEND_URL
+const SUPPORT_BACKEND_API_KEY = env.SUPPORT_BACKEND_API_KEY
 
 async function callSkillsApi(opts: {
   method: "GET" | "POST" | "PATCH" | "DELETE"
@@ -1730,9 +1726,6 @@ async function callSkillsApi(opts: {
   query?: Record<string, string | undefined>
   body?: any
 }): Promise<any> {
-  if (!SUPPORT_BACKEND_API_KEY) {
-    throw new Error("SUPPORT_BACKEND_API_KEY ist nicht konfiguriert — Skill-Verwaltung nicht verfügbar.")
-  }
   const url = new URL(`${SUPPORT_BACKEND_URL}${opts.path}`)
   url.searchParams.set("company_id", opts.companyId)
   if (opts.userId) url.searchParams.set("user_id", opts.userId)
@@ -4554,14 +4547,6 @@ async function runAgentWorkflow(params: {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: "OPENAI_API_KEY fehlt." }, { status: 500 })
-    }
-
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY fehlt." }, { status: 500 })
-    }
-
     const body: AgentRequestBody = await request.json()
     const message = compact(String(body.message || ""))
 
@@ -4571,12 +4556,11 @@ export async function POST(request: NextRequest) {
 
     // Cross-Agent auth: accept X-Cross-Agent-Secret as alternative to user session
     const crossAgentSecret = request.headers.get("x-cross-agent-secret")
-    const expectedSecret = process.env.CROSS_AGENT_SECRET
-    const isCrossAgentRequest = crossAgentSecret && expectedSecret && crossAgentSecret === expectedSecret
+    const isCrossAgentRequest = !!crossAgentSecret && crossAgentSecret === env.CROSS_AGENT_SECRET
 
     const serviceClient = createClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      env.SUPABASE_SERVICE_ROLE_KEY
     )
 
     let user: { id: string }

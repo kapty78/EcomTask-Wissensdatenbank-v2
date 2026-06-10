@@ -2,20 +2,13 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
+import { env } from '@/lib/env'
+
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-function getPipelineBaseUrl(): string {
-  const raw =
-    process.env.WISSENSBASIS_PIPELINE_URL ||
-    process.env.NEXT_PUBLIC_WISSENSBASIS_PIPELINE_URL ||
-    'https://wissensbasis-pipeline.onrender.com'
-  return raw.replace(/\/+$/, '')
-}
-
-function getPipelineApiKey(): string {
-  return process.env.WISSENSBASIS_API_KEY || process.env.NEXT_PUBLIC_WISSENSBASIS_API_KEY || ''
-}
+const PIPELINE_BASE_URL = env.WISSENSBASIS_PIPELINE_URL.replace(/\/+$/, '')
+const PIPELINE_API_KEY = env.WISSENSBASIS_API_KEY
 
 async function requireAuth(): Promise<NextResponse | null> {
   const supabase = createRouteHandlerClient({ cookies })
@@ -39,18 +32,10 @@ export async function GET(
     const authError = await requireAuth()
     if (authError) return authError
 
-    const apiKey = getPipelineApiKey()
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'WISSENSBASIS_API_KEY ist nicht gesetzt' },
-        { status: 500 }
-      )
-    }
-
     const jobId = encodeURIComponent(params.jobId)
-    const upstreamResponse = await fetch(`${getPipelineBaseUrl()}/v1/jobs/${jobId}/result`, {
+    const upstreamResponse = await fetch(`${PIPELINE_BASE_URL}/v1/jobs/${jobId}/result`, {
       headers: {
-        'X-API-Key': apiKey
+        'X-API-Key': PIPELINE_API_KEY
       }
     })
 
