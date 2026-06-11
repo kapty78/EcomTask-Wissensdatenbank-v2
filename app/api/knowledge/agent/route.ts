@@ -47,12 +47,64 @@ type AgentToolActivity = {
   }
 }
 
+/** WP-D1 (Contract v2): strukturierte Aenderung eines Schreib-Tools —
+ *  Format gespiegelt aus Support AI shared/types.ts (EntityChange). */
+type EntityChange = {
+  entity_type: string
+  entity_id: string
+  operation: "create" | "update" | "delete"
+  field_name?: string | null
+}
+
+type AgentRunError = {
+  tool: string
+  code?: string
+  message: string
+}
+
 type AgentRunResult = {
   message: string
   richContent: AgentRichContent | null
   toolActivities: AgentToolActivity[]
   activeKnowledgeBaseId: string | null
   conversationId: string | null
+  /** WP-D1: Response-Contract v2 — ok ist false sobald ein Tool-Fehler auftrat. */
+  contractVersion: 2
+  ok: boolean
+  summary: string
+  changes: EntityChange[]
+  errors: AgentRunError[]
+}
+
+/** WP-D1: generischer Change-Extraktor — leitet aus Tool-Name (Operation)
+ *  und Result-Feldern (IDs) die strukturierte Aenderung ab, statt alle
+ *  ~50 Schreib-Tools einzeln anzufassen. Lese-Tools liefern null. */
+function extractEntityChange(toolName: string, result: any): EntityChange | null {
+  if (!result || typeof result !== "object") return null
+  const op: EntityChange["operation"] | null =
+    /^(delete|remove)_/.test(toolName) ? "delete"
+    : /^(create|add|import|upload|generate)_/.test(toolName) ? "create"
+    : /^(update|edit|rename|move|merge|combine|set)_/.test(toolName) ? "update"
+    : null
+  if (!op) return null
+  const candidates: Array<[string, any]> = [
+    ["document", result.document?.id ?? result.document_id],
+    ["chunk", result.chunk?.id ?? result.chunk_id],
+    ["fact", result.fact?.id ?? result.fact_id],
+    ["knowledge_base", result.knowledge_base?.id ?? result.knowledge_base_id],
+    [String(result.deleted?.type || "entity"), result.deleted?.id],
+  ]
+  for (const [type, id] of candidates) {
+    if (typeof id === "string" && id.length > 0) {
+      return { entity_type: type, entity_id: id, operation: op }
+    }
+  }
+  // Schreib-Tool ohne erkennbare ID: Aenderung trotzdem ausweisen,
+  // damit ok/changes nie faelschlich leer wirken.
+  if (result.success === true || result.ok === true) {
+    return { entity_type: toolName.replace(/^(create|add|import|upload|generate|update|edit|rename|move|merge|combine|set|delete|remove)_/, ""), entity_id: "unbekannt", operation: op }
+  }
+  return null
 }
 
 type AgentStreamEventName = "context" | "tool_start" | "tool_done" | "tool_error" | "text_delta" | "assistant_done"
@@ -4243,6 +4295,11 @@ async function runAgentWorkflow(params: {
   ]
 
   const toolActivities: AgentToolActivity[] = []
+  // WP-D1: Contract-v2-Collectors — jede Schreib-Aenderung und jeder
+  // Tool-Fehler landet strukturiert in der Response (Plan-Executor der
+  // Support AI sieht damit nie wieder einen Fake-Erfolg).
+  const collectedChanges: EntityChange[] = []
+  const collectedErrors: AgentRunError[] = []
   const toolExecutionRecords: ToolExecutionRecord[] = []
   const maxToolRounds = 14
 
@@ -4340,7 +4397,12 @@ async function runAgentWorkflow(params: {
         richContent,
         toolActivities,
         activeKnowledgeBaseId: currentKnowledgeBaseId,
-        conversationId
+        conversationId,
+        contractVersion: 2,
+        ok: collectedErrors.length === 0,
+        summary: safeMessage.slice(0, 500),
+        changes: collectedChanges,
+        errors: collectedErrors
       }
     }
 
@@ -4445,6 +4507,12 @@ async function runAgentWorkflow(params: {
           }
         }
 
+        const change = extractEntityChange(toolName, execution?.result)
+        if (change) collectedChanges.push(change)
+        if (execution?.result && typeof execution.result === "object" && (execution.result.success === false || typeof execution.result.error === "string")) {
+          collectedErrors.push({ tool: toolName, message: String(execution.result.error || "Tool meldete success=false") })
+        }
+
         toolActivities.push(doneActivity)
         emit("tool_done", doneActivity)
 
@@ -4488,6 +4556,8 @@ async function runAgentWorkflow(params: {
             lines: [errorMessage]
           }
         }
+
+        collectedErrors.push({ tool: toolName, message: errorMessage })
 
         toolActivities.push(errorActivity)
         emit("tool_error", errorActivity)
@@ -4541,7 +4611,13 @@ async function runAgentWorkflow(params: {
     richContent: fallbackRichContent,
     toolActivities,
     activeKnowledgeBaseId: currentKnowledgeBaseId,
-    conversationId
+    conversationId,
+    contractVersion: 2,
+    // Max-Rounds ohne stabile Antwort ist KEIN Erfolg (WP-D1/C5).
+    ok: false,
+    summary: fallbackMessage.slice(0, 500),
+    changes: collectedChanges,
+    errors: collectedErrors.length > 0 ? collectedErrors : [{ tool: "runner", code: "MAX_ROUNDS", message: "max_rounds_reached" }]
   }
 }
 
@@ -4647,7 +4723,11 @@ export async function POST(request: NextRequest) {
             // Text was already streamed via text_delta events.
             // Rich content was sent via assistant_done event.
             send("done", {
-              ok: true,
+              contractVersion: 2,
+              ok: result.ok,
+              summary: result.summary,
+              changes: result.changes,
+              errors: result.errors,
               conversationId: result.conversationId,
               activeKnowledgeBaseId: result.activeKnowledgeBaseId,
               toolActivities: result.toolActivities
