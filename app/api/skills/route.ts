@@ -5,7 +5,7 @@ import { resolveSkillsAuth, forwardToSkillsApi } from "@/lib/skills-proxy"
 //   ?knowledge_base_id=<uuid>  → nur Skills dieser Datenbank
 //   ?only_general=true         → nur firmenweite Skills
 export async function GET(request: NextRequest) {
-  const auth = await resolveSkillsAuth()
+  const auth = await resolveSkillsAuth(request)
   if (auth instanceof NextResponse) return auth
   const sp = request.nextUrl.searchParams
   return forwardToSkillsApi({
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
 // POST /api/skills — Skill anlegen (Body inkl. optional knowledge_base_id).
 export async function POST(request: NextRequest) {
-  const auth = await resolveSkillsAuth()
+  const auth = await resolveSkillsAuth(request)
   if (auth instanceof NextResponse) return auth
   const body = await request.json().catch(() => ({}))
   return forwardToSkillsApi({

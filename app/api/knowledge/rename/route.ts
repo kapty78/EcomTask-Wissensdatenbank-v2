@@ -1,21 +1,16 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
-import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
-import { Database } from "@/supabase/types"
+import { getRouteAuth } from "@/lib/route-auth"
 
 export async function POST(request: Request) {
   const { knowledgeBaseId, newName } = await request.json()
-  const cookieStore = cookies()
-  const supabase = createRouteHandlerClient<Database>({ cookies: () => cookieStore })
 
   try {
-    const {
-      data: { session }
-    } = await supabase.auth.getSession()
-
-    if (!session) {
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const supabase = auth.supabase
 
     if (!knowledgeBaseId || !newName) {
       return NextResponse.json(

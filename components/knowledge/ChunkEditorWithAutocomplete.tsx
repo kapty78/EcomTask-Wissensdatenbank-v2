@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react"
 
 interface ChunkEditorWithAutocompleteProps {
@@ -68,7 +69,7 @@ export function ChunkEditorWithAutocomplete({
 
     setIsLoading(true)
     try {
-      const res = await fetch("/api/knowledge/autocomplete", {
+      const res = await apiFetch("/api/knowledge/autocomplete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ textBeforeCursor }),

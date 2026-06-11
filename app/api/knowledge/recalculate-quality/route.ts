@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { getRouteAuth } from '@/lib/route-auth'
 
 // Hilfsfunktion zur Konfliktprüfung
 async function checkForActualConflicts(items: any[]): Promise<boolean> {
@@ -44,17 +43,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createRouteHandlerClient({ cookies })
-
-    // Verify user has permission to access this knowledge base
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    
-    if (userError || !user) {
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
       return NextResponse.json(
         { error: 'Authentifizierung erforderlich' },
         { status: 401 }
       )
     }
+    const { user, supabase } = auth
 
     // Verify user has access to this knowledge base
     const { data: knowledgeBase, error: kbError } = await supabase

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -81,7 +82,7 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
         throw new Error('Keine aktive Sitzung — bitte neu anmelden.')
       }
 
-      const response = await fetch('/api/knowledge/retrieve-proxy', {
+      const response = await apiFetch('/api/knowledge/retrieve-proxy', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useEffect, FC, useRef } from "react"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { Database } from "@/supabase/types"
@@ -159,7 +160,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
 
     setRenameLoading(true)
     try {
-      const res = await fetch("/api/knowledge/rename", {
+      const res = await apiFetch("/api/knowledge/rename", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ knowledgeBaseId: renamingId, newName: renameValue.trim() }),
@@ -195,7 +196,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
 
     setDeleteLoading(true)
     try {
-      const res = await fetch("/api/knowledge/delete", {
+      const res = await apiFetch("/api/knowledge/delete", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ knowledgeBaseId: deletingId }),

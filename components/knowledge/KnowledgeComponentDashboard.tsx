@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useEffect, useRef, useCallback, memo } from "react"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { User } from "@supabase/supabase-js"
@@ -2219,7 +2220,7 @@ export default function KnowledgeComponentDashboard() {
     }
 
     try {
-      const response = await fetch('/api/knowledge/search-enhanced', {
+      const response = await apiFetch('/api/knowledge/search-enhanced', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2431,7 +2432,7 @@ export default function KnowledgeComponentDashboard() {
     setIsMarkdownFormatting(true);
     
     try {
-      const response = await fetch('/api/knowledge/format-markdown', {
+      const response = await apiFetch('/api/knowledge/format-markdown', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2485,7 +2486,7 @@ export default function KnowledgeComponentDashboard() {
     // Der Vercel Cron stellt sie nach 4 Minuten wieder her, falls N8N ausfällt.
     let regenerationStartedAt = new Date().toISOString();
     try {
-      const markResponse = await fetch('/api/knowledge/mark-for-regeneration', {
+      const markResponse = await apiFetch('/api/knowledge/mark-for-regeneration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chunkId: chunkDetails.id }),
@@ -2516,7 +2517,7 @@ export default function KnowledgeComponentDashboard() {
     addToast('success', 'Fakten-Regenerierung wurde gestartet. Bestehende Fakten wurden gelöscht, neue werden generiert.');
     
     try {
-      const response = await fetch('/api/knowledge/regenerate-facts', {
+      const response = await apiFetch('/api/knowledge/regenerate-facts', {
          method: 'POST',
          headers: {
            'Content-Type': 'application/json',
@@ -2594,7 +2595,7 @@ export default function KnowledgeComponentDashboard() {
           })
           addToast('success', `Fakten-Regenerierung abgeschlossen! ${facts.length} ${facts.length === 1 ? 'neuer Fakt' : 'neue Fakten'} generiert.`)
           // Alte "pending" Fakten endgültig löschen (im Hintergrund, kein await)
-          fetch('/api/knowledge/cleanup-regeneration', {
+          apiFetch('/api/knowledge/cleanup-regeneration', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chunkId: chunkIdToWatch }),
@@ -2663,7 +2664,7 @@ export default function KnowledgeComponentDashboard() {
     } catch (error) {
       // Sofortiger Rollback: alte Fakten wiederherstellen, nicht auf den 4-Minuten-Cron warten.
       try {
-        await fetch('/api/knowledge/restore-regeneration', {
+        await apiFetch('/api/knowledge/restore-regeneration', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chunkId: chunkDetails!.id }),
@@ -2829,7 +2830,7 @@ export default function KnowledgeComponentDashboard() {
 
   const handleDeleteFact = useCallback(async (factId: string) => {
     try {
-      const response = await fetch('/api/knowledge/delete-item', {
+      const response = await apiFetch('/api/knowledge/delete-item', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -2981,7 +2982,7 @@ export default function KnowledgeComponentDashboard() {
     }
 
     try {
-      const response = await fetch('/api/knowledge/rename-source', {
+      const response = await apiFetch('/api/knowledge/rename-source', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -3314,7 +3315,7 @@ export default function KnowledgeComponentDashboard() {
         return
       }
 
-      const response = await fetch('/api/knowledge/sources', {
+      const response = await apiFetch('/api/knowledge/sources', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3462,7 +3463,7 @@ export default function KnowledgeComponentDashboard() {
   // Funktion zum Löschen eines Wissenseintrags
   const deleteKnowledgeItem = async (itemId: string) => {
     try {
-      const response = await fetch('/api/knowledge/delete-item', {
+      const response = await apiFetch('/api/knowledge/delete-item', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -3497,7 +3498,7 @@ export default function KnowledgeComponentDashboard() {
     
     setIsDeletingBulk(true);
     try {
-      const response = await fetch('/api/knowledge/bulk-delete', {
+      const response = await apiFetch('/api/knowledge/bulk-delete', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -3635,7 +3636,7 @@ export default function KnowledgeComponentDashboard() {
       }
 
       // Use the new API route to get chunk details
-      const response = await fetch('/api/knowledge/chunk-details', {
+      const response = await apiFetch('/api/knowledge/chunk-details', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3812,7 +3813,7 @@ export default function KnowledgeComponentDashboard() {
   // ✅ NEU: Chunk-Löschungs-Handler
   const handleDeleteChunk = async (chunkId: string) => {
     try {
-      const response = await fetch('/api/knowledge/delete-chunk', {
+      const response = await apiFetch('/api/knowledge/delete-chunk', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -3985,7 +3986,7 @@ export default function KnowledgeComponentDashboard() {
 
       // console.log('📤 API-Request Body:', requestBody);
 
-      const response = await fetch('/api/cursor/update-chunk', {
+      const response = await apiFetch('/api/cursor/update-chunk', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -4078,7 +4079,7 @@ export default function KnowledgeComponentDashboard() {
 
     setCreatingChunk(true);
     try {
-      const response = await fetch('/api/knowledge/create-chunk', {
+      const response = await apiFetch('/api/knowledge/create-chunk', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -4228,7 +4229,7 @@ export default function KnowledgeComponentDashboard() {
         <div className="flex gap-1.5 flex-wrap">
           <button
             onClick={() => setActiveTab('upload')}
-            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
               activeTab === 'upload'
                 ? 'bg-primary text-foreground shadow-lg'
                 : 'bg-muted text-muted-foreground hover:bg-secondary/80'
@@ -4244,7 +4245,7 @@ export default function KnowledgeComponentDashboard() {
                 fetchKnowledgeItems(selectedKnowledgeBaseId)
               }
             }}
-            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
               activeTab === 'entries'
                 ? 'bg-primary text-foreground shadow-lg'
                 : 'bg-muted text-muted-foreground hover:bg-secondary/80'
@@ -4255,7 +4256,7 @@ export default function KnowledgeComponentDashboard() {
           </button>
           <button
             onClick={() => setActiveTab('graph')}
-            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
               activeTab === 'graph'
                 ? 'bg-primary text-foreground shadow-lg'
                 : 'bg-muted text-muted-foreground hover:bg-secondary/80'
@@ -4266,7 +4267,7 @@ export default function KnowledgeComponentDashboard() {
           </button>
           <button
             onClick={() => setActiveTab('skills')}
-            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
               activeTab === 'skills'
                 ? 'bg-primary text-foreground shadow-lg'
                 : 'bg-muted text-muted-foreground hover:bg-secondary/80'
@@ -4672,7 +4673,9 @@ export default function KnowledgeComponentDashboard() {
 
 
                             {showGraphView && selectedKnowledgeBaseId ? (
-                              <div className="flex-1 min-h-0 overflow-hidden">
+                              // Unter xl liefert die Flex-Kette keine Höhe (rechte Spalte hat
+                              // nur xl:flex-1) — ohne Mindesthöhe kollabiert der Canvas auf 0px.
+                              <div className="flex-1 min-h-[480px] xl:min-h-0 overflow-hidden">
                                 <KnowledgeGraphView
                                   knowledgeBaseId={selectedKnowledgeBaseId}
                                   onClose={() => setShowGraphView(false)}
@@ -4850,7 +4853,7 @@ export default function KnowledgeComponentDashboard() {
                         )}
 
                         {activeTab === 'graph' && selectedKnowledgeBaseId && (
-                          <div className="flex flex-col flex-1 overflow-hidden min-h-0">
+                          <div className="flex flex-col flex-1 overflow-hidden min-h-[480px] xl:min-h-0">
                             <div className="flex-1 min-h-0">
                               <ChatInterface
                                 knowledgeBaseId={selectedKnowledgeBaseId}

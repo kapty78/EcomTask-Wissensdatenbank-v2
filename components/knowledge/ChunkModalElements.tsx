@@ -120,7 +120,7 @@ export function ChunkModalHeader({
   }
 
   return (
-    <div className="relative z-50 bg-[#1a1a1a] border-b border-white/10 shrink-0 rounded-t-xl">
+    <div className="relative z-50 bg-[#1a1a1a] shrink-0 rounded-t-xl">
       <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
         {/* Linker Bereich: Titel */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink-0">

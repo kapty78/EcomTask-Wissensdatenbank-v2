@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-fetch"
 import {
   CheckCircle2,
   GitMerge,
@@ -242,7 +243,7 @@ export const MismatchFinder: React.FC<MismatchFinderProps> = ({
       const poll = async (attempt: number) => {
         if (pollingAbortRef.current) return;
         try {
-          const response = await fetch("/api/knowledge/find-mismatches", {
+          const response = await apiFetch("/api/knowledge/find-mismatches", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -310,7 +311,7 @@ export const MismatchFinder: React.FC<MismatchFinderProps> = ({
       let startedPolling = false;
 
       try {
-        const response = await fetch("/api/knowledge/find-mismatches", {
+        const response = await apiFetch("/api/knowledge/find-mismatches", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ knowledgeBaseId }),
@@ -368,7 +369,7 @@ export const MismatchFinder: React.FC<MismatchFinderProps> = ({
   ) => {
     setResolving(true);
     try {
-      const response = await fetch("/api/knowledge/resolve-conflict", {
+      const response = await apiFetch("/api/knowledge/resolve-conflict", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keepItemId, removeItemIds }),

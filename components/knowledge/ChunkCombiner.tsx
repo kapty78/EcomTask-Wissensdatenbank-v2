@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-fetch"
 import { CheckCircle2, FileStack, GitMerge, Layers, Loader2, RefreshCcw, Search, Sparkles } from "lucide-react";
 import {
   Dialog,
@@ -162,7 +163,7 @@ export const ChunkCombiner: React.FC<ChunkCombinerProps> = ({
 
       setLoading(true);
       try {
-        const response = await fetch("/api/knowledge/combine-suggestions", {
+        const response = await apiFetch("/api/knowledge/combine-suggestions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ knowledgeBaseId }),
@@ -246,7 +247,7 @@ export const ChunkCombiner: React.FC<ChunkCombinerProps> = ({
         .filter((n) => n.type !== "document")
         .flatMap((n) => n.knowledgeItemIds);
 
-      const response = await fetch("/api/knowledge/combine-execute", {
+      const response = await apiFetch("/api/knowledge/combine-execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

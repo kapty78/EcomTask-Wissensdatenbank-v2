@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useRef, useEffect } from "react"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { Database } from "@/lib/supabase/types"
@@ -466,7 +467,7 @@ export const KnowledgeItemUploadSimple: React.FC<KnowledgeItemUploadProps> = ({
         message: "Ergebnis-PDF wird geladen..."
       })
 
-      const response = await fetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}/result`)
+      const response = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}/result`)
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
@@ -511,7 +512,7 @@ export const KnowledgeItemUploadSimple: React.FC<KnowledgeItemUploadProps> = ({
 
     const pollStatus = async () => {
       try {
-        const response = await fetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}`)
+        const response = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}`)
         const data = await response.json().catch(() => ({}))
 
         if (!response.ok) {
@@ -604,7 +605,7 @@ export const KnowledgeItemUploadSimple: React.FC<KnowledgeItemUploadProps> = ({
           return
         }
 
-        const response = await fetch('/api/cursor/check-title-uniqueness', {
+        const response = await apiFetch('/api/cursor/check-title-uniqueness', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -891,7 +892,7 @@ export const KnowledgeItemUploadSimple: React.FC<KnowledgeItemUploadProps> = ({
         message: `Starte Job für ${uploadedUrls.length} Dateien...`
       })
 
-      const startResponse = await fetch(`${PIPELINE_PROXY_BASE}/jobs`, {
+      const startResponse = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

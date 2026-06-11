@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import ReactFlow, {
   Node,
@@ -184,7 +185,7 @@ function KnowledgeGraphContent({
     
     try {
       // API-Route verwenden statt direkten Supabase-Aufruf
-      const response = await fetch(`/api/knowledge/graph-data?knowledge_base_id=${knowledgeBaseId}&include_layout=true&min_similarity=0.3`)
+      const response = await apiFetch(`/api/knowledge/graph-data?knowledge_base_id=${knowledgeBaseId}&include_layout=true&min_similarity=0.3`)
       
       if (!response.ok) {
         throw new Error(`API-Fehler: ${response.status} ${response.statusText}`)

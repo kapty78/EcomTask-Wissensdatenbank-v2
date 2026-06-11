@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
-import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
+import { getRouteAuth } from "@/lib/route-auth"
 
 type DeleteSourceRequest = {
   knowledgeBaseId: string
@@ -88,18 +87,14 @@ async function deleteDocumentTreeFallback(
 }
 
 export async function DELETE(request: Request) {
-  const cookieStore = cookies()
-  const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
-
   try {
-    const {
-      data: { session },
-      error: sessionError
-    } = await supabase.auth.getSession()
-
-    if (sessionError || !session) {
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const supabase = auth.supabase
+    const session = { user: auth.user }
 
     const body: DeleteSourceRequest = await request.json()
     const knowledgeBaseId = body.knowledgeBaseId

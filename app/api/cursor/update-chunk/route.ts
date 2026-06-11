@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
-import { Database } from '@/supabase/types'
 import { generateEmbeddings } from '@/lib/knowledge-base/embedding'
 import { logger } from '@/lib/utils/logger'
+import { getRouteAuth } from '@/lib/route-auth'
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
@@ -40,19 +38,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Use auth client for user verification
-    const authClient = createRouteHandlerClient<Database>({ cookies })
-    
-    // Get user from session
-    const { data: { user }, error: userError } = await authClient.auth.getUser()
-    
-    if (userError || !user) {
-      logger.error('❌ Authentication failed:', userError)
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
+      logger.error('❌ Authentication failed: no valid bearer token or cookie session')
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       )
     }
+    const { user } = auth
 
     logger.info(`✅ User authenticated: ${user.id}`)
     

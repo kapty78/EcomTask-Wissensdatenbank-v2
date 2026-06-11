@@ -7,10 +7,9 @@
  * Never reimplement skill validation here.
  */
 import { NextResponse } from "next/server"
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
-import { cookies } from "next/headers"
 
 import { env } from "@/lib/env"
+import { getRouteAuth } from "@/lib/route-auth"
 
 const SUPPORT_BACKEND_URL = env.SUPPORT_BACKEND_URL
 const SUPPORT_BACKEND_API_KEY = env.SUPPORT_BACKEND_API_KEY
@@ -20,15 +19,13 @@ export interface SkillsAuth {
   companyId: string
 }
 
-export async function resolveSkillsAuth(): Promise<SkillsAuth | NextResponse> {
-  const authClient = createRouteHandlerClient({ cookies })
-  const {
-    data: { user },
-    error,
-  } = await authClient.auth.getUser()
-  if (error || !user) {
+export async function resolveSkillsAuth(request: Request): Promise<SkillsAuth | NextResponse> {
+  // Bearer im Embedded-Modus, sonst Cookies
+  const auth = await getRouteAuth(request)
+  if (!auth) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 })
   }
+  const { user, supabase: authClient } = auth
   const { data: profile } = await authClient
     .from("profiles")
     .select("company_id")

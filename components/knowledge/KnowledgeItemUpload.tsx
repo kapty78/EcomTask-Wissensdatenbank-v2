@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import React, { useState, useRef, useEffect } from "react"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { Database } from "@/lib/supabase/types"
@@ -457,7 +458,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
         message: "Ergebnis-PDF wird geladen..."
       })
 
-      const response = await fetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}/result`)
+      const response = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}/result`)
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
@@ -502,7 +503,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
 
     const pollStatus = async () => {
       try {
-        const response = await fetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}`)
+        const response = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs/${pipelineJobId}`)
         const data = await response.json().catch(() => ({}))
 
         if (!response.ok) {
@@ -595,7 +596,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
           return
         }
 
-        const response = await fetch('/api/cursor/check-title-uniqueness', {
+        const response = await apiFetch('/api/cursor/check-title-uniqueness', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -882,7 +883,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
         message: `Starte Job für ${uploadedUrls.length} Dateien...`
       })
 
-      const startResponse = await fetch(`${PIPELINE_PROXY_BASE}/jobs`, {
+      const startResponse = await apiFetch(`${PIPELINE_PROXY_BASE}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -981,7 +982,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          className={`flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors ${
+          className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
             sourceType === "file"
               ? "bg-primary text-foreground"
               : "bg-muted text-muted-foreground hover:bg-secondary/80"
@@ -997,7 +998,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
         </button>
         <button
           type="button"
-          className={`flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors ${
+          className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
             sourceType === "folder"
               ? "bg-primary text-foreground"
               : "bg-muted text-muted-foreground hover:bg-secondary/80"
@@ -1013,7 +1014,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
         </button>
         <button
           type="button"
-          className={`flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors ${
+          className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
             sourceType === "text"
               ? "bg-primary text-foreground"
               : "bg-muted text-muted-foreground hover:bg-secondary/80"
@@ -1182,7 +1183,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
             <div className="relative">
               <textarea
                 rows={8}
-                className="w-full min-h-[120px] max-h-[50vh] resize-y rounded-lg border border-border bg-card px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                className="w-full min-h-[120px] max-h-[50vh] resize-y rounded-lg border border-white/10 bg-white/[0.05] px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-white/20 focus:outline-none"
                 placeholder="Fügen Sie hier Ihren Text ein..."
                 value={textContent}
                 onChange={(e) => setTextContent(e.target.value)}
@@ -1214,7 +1215,7 @@ export const KnowledgeItemUpload: React.FC<KnowledgeItemUploadProps> = ({
                 className={`w-full rounded-lg border px-4 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none pr-10 ${
                   titleError
                     ? "border-muted-foreground/50 bg-muted/10 focus:border-muted-foreground"
-                    : "border-border bg-card focus:border-primary"
+                    : "border-white/10 bg-white/[0.05] focus:border-white/20"
                 }`}
                 placeholder={
                   sourceType === "file"

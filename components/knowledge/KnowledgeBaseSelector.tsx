@@ -343,8 +343,7 @@ export const KnowledgeBaseSelector: React.FC<KnowledgeBaseSelectorProps> = ({
                 {kb.name}
               </button>
             );
-          }
-          ))}
+          })}
         </div>
       )}
     </div>

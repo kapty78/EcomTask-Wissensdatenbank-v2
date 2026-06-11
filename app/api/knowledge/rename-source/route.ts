@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
-import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
+import { getRouteAuth } from "@/lib/route-auth"
 
 type RenameSourceRequest = {
   knowledgeBaseId: string
@@ -10,18 +9,13 @@ type RenameSourceRequest = {
 }
 
 export async function POST(request: Request) {
-  const cookieStore = cookies()
-  const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
-
   try {
-    const {
-      data: { session },
-      error: sessionError
-    } = await supabase.auth.getSession()
-
-    if (sessionError || !session) {
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const supabase = auth.supabase
 
     const body: RenameSourceRequest = await request.json()
     const knowledgeBaseId = body.knowledgeBaseId

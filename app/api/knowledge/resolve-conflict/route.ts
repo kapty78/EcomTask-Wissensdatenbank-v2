@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { getRouteAuth } from '@/lib/route-auth'
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,17 +12,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createRouteHandlerClient({ cookies })
-
-    // Verify user has permission to modify these items
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    
-    if (userError || !user) {
+    // Auth (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
       return NextResponse.json(
         { error: 'Authentifizierung erforderlich' },
         { status: 401 }
       )
     }
+    const { user, supabase } = auth
 
     // Get the knowledge base ID from the kept item to verify access
     const { data: keepItem, error: keepItemError } = await supabase

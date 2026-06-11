@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import { useEffect, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { Loader2, ZoomIn, ZoomOut, Maximize2, X, RotateCcw, Search } from "lucide-react"
@@ -382,7 +383,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
       setLoading(true)
       setError(null)
       try {
-        const res = await fetch(`/api/knowledge/entity-graph?knowledge_base_id=${knowledgeBaseId}`)
+        const res = await apiFetch(`/api/knowledge/entity-graph?knowledge_base_id=${knowledgeBaseId}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         // Back-compat: server may return without communities field on older deploys

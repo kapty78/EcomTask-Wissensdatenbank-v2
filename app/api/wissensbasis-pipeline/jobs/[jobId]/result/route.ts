@@ -1,8 +1,7 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { env } from '@/lib/env'
+import { getRouteAuth } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -10,26 +9,21 @@ export const runtime = 'nodejs'
 const PIPELINE_BASE_URL = env.WISSENSBASIS_PIPELINE_URL.replace(/\/+$/, '')
 const PIPELINE_API_KEY = env.WISSENSBASIS_API_KEY
 
-async function requireAuth(): Promise<NextResponse | null> {
-  const supabase = createRouteHandlerClient({ cookies })
-  const {
-    data: { user },
-    error
-  } = await supabase.auth.getUser()
-
-  if (error || !user) {
+async function requireAuth(req: NextRequest): Promise<NextResponse | null> {
+  // Bearer im Embedded-Modus, sonst Cookies
+  const auth = await getRouteAuth(req)
+  if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
   return null
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { jobId: string } }
 ) {
   try {
-    const authError = await requireAuth()
+    const authError = await requireAuth(req)
     if (authError) return authError
 
     const jobId = encodeURIComponent(params.jobId)

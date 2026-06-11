@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-fetch"
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -665,7 +666,7 @@ export default function KnowledgeAgentLauncher({ userName, variant = "inline" }:
           return
         }
 
-        const response = await fetch(`/api/cursor/status?document_id=${encodeURIComponent(documentId)}`, {
+        const response = await apiFetch(`/api/cursor/status?document_id=${encodeURIComponent(documentId)}`, {
           method: "GET",
           headers: {
             Authorization: `Bearer ${token}`
@@ -1029,7 +1030,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
         requestBody.attachments = attachments
       }
 
-      const response = await fetch("/api/knowledge/agent", {
+      const response = await apiFetch("/api/knowledge/agent", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1414,7 +1415,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
         try {
           const formData = new FormData()
           formData.append("file", att.file)
-          const res = await fetch("/api/agent-upload", { method: "POST", body: formData })
+          const res = await apiFetch("/api/agent-upload", { method: "POST", body: formData })
           if (!res.ok) { console.error("Upload-Fehler:", (await res.json().catch(() => ({}))).error); continue }
           const data = await res.json()
           if (data.url) {

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
+import { getRouteAuth } from '@/lib/route-auth'
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,15 +16,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Supabase Client erstellen
-    const supabase = createRouteHandlerClient({ cookies })
-
-    // Benutzer authentifizieren
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      console.log('[regenerate-facts] Auth error:', authError)
+    // Benutzer authentifizieren (Bearer im Embedded-Modus, sonst Cookies)
+    const auth = await getRouteAuth(request)
+    if (!auth) {
+      console.log('[regenerate-facts] Auth error: no valid bearer token or cookie session')
       return NextResponse.json({ error: 'Nicht authentifiziert' }, { status: 401 })
     }
+    const { user, supabase } = auth
 
     console.log('[regenerate-facts] User authenticated:', user.id)
 
