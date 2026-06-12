@@ -6,6 +6,7 @@ import OpenAI from "openai"
 
 import { Database } from "@/supabase/types"
 import { env } from "@/lib/env"
+import { verifyCrossAgentHmac, timingSafeEqualStrings } from "@/lib/cross-agent-auth"
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
@@ -4127,8 +4128,10 @@ async function runAgentWorkflow(params: {
   crossAgentCompanyId?: string | null
   emit?: AgentStreamEmitter
   enableKickoffStream?: boolean
+  /** WP-D2: X-Trace-Id des Orchestrator-Turns — in agent_messages.metadata geloggt. */
+  traceId?: string | null
 }): Promise<AgentRunResult> {
-  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream } = params
+  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream, traceId } = params
   const emit = params.emit || (() => {})
 
   const requestedConversationId = asOptionalString(body.conversationId)
@@ -4243,9 +4246,12 @@ async function runAgentWorkflow(params: {
     knowledgeBaseId: currentKnowledgeBaseId,
     role: "user",
     content: message,
-    metadata: Array.isArray(body.attachments) && body.attachments.length > 0
-      ? { attachments: body.attachments }
-      : undefined
+    metadata: {
+      ...(Array.isArray(body.attachments) && body.attachments.length > 0
+        ? { attachments: body.attachments }
+        : {}),
+      ...(traceId ? { trace_id: traceId } : {})
+    }
   })
 
   // Build user message with optional attachments (images as image_url, files as context)
@@ -4379,6 +4385,9 @@ async function runAgentWorkflow(params: {
       }
       if (toolActivities.length > 0) {
         assistantMetadata.toolActivities = toolActivities
+      }
+      if (traceId) {
+        assistantMetadata.trace_id = traceId
       }
 
       await persistAgentMessage({
@@ -4621,18 +4630,75 @@ async function runAgentWorkflow(params: {
   }
 }
 
+// WP-D2: Legacy-Auth-Aufrufe zaehlen (Cutover-Kriterium analog WP-D1).
+let legacySecretAuthCount = 0
+
 export async function POST(request: NextRequest) {
   try {
-    const body: AgentRequestBody = await request.json()
+    // WP-D2: Raw-Body lesen — die HMAC-Signatur deckt sha256(body) ab,
+    // deshalb darf hier nicht direkt request.json() geparst werden.
+    const rawBody = await request.text()
+    let body: AgentRequestBody
+    try {
+      body = JSON.parse(rawBody)
+    } catch {
+      return NextResponse.json({ error: "Ungueltiger JSON-Body." }, { status: 400 })
+    }
     const message = compact(String(body.message || ""))
 
     if (!message) {
       return NextResponse.json({ error: "Nachricht ist erforderlich." }, { status: 400 })
     }
 
-    // Cross-Agent auth: accept X-Cross-Agent-Secret as alternative to user session
-    const crossAgentSecret = request.headers.get("x-cross-agent-secret")
-    const isCrossAgentRequest = !!crossAgentSecret && crossAgentSecret === env.CROSS_AGENT_SECRET
+    const traceId = request.headers.get("x-trace-id")
+
+    // ── Cross-Agent-Auth (WP-D2) ────────────────────────────────────
+    // Neuer Pfad: HMAC ueber Canonical Request (Signature/Timestamp/
+    // Request-Id-Header). Legacy-Pfad: statisches X-Cross-Agent-Secret —
+    // toleriert bis REQUIRE_CROSS_AGENT_HMAC=true (Cutover wie WP-D1:
+    // erst wenn die Logs nur noch HMAC zeigen).
+    const hmacSignature = request.headers.get("x-cross-agent-signature")
+    const hmacTimestamp = request.headers.get("x-cross-agent-timestamp")
+    const hmacRequestId = request.headers.get("x-cross-agent-request-id")
+    const legacyCrossAgentSecret = request.headers.get("x-cross-agent-secret")
+
+    let isCrossAgentRequest = false
+    let dedupRequestId: string | null = null
+
+    if (hmacSignature || hmacTimestamp || hmacRequestId) {
+      const verdict = verifyCrossAgentHmac({
+        secret: env.CROSS_AGENT_SECRET,
+        method: "POST",
+        path: "/api/knowledge/agent",
+        signature: hmacSignature,
+        timestamp: hmacTimestamp,
+        requestId: hmacRequestId,
+        rawBody
+      })
+      if (!verdict.ok) {
+        return NextResponse.json(
+          { error: `Cross-Agent-Auth fehlgeschlagen: ${verdict.reason}` },
+          { status: 401 }
+        )
+      }
+      isCrossAgentRequest = true
+      dedupRequestId = verdict.requestId
+    } else if (legacyCrossAgentSecret) {
+      if (env.REQUIRE_CROSS_AGENT_HMAC) {
+        return NextResponse.json(
+          { error: "Cross-Agent-Aufrufe erfordern eine HMAC-Signatur (REQUIRE_CROSS_AGENT_HMAC aktiv)." },
+          { status: 401 }
+        )
+      }
+      if (timingSafeEqualStrings(legacyCrossAgentSecret, env.CROSS_AGENT_SECRET)) {
+        legacySecretAuthCount += 1
+        console.warn(
+          `[knowledge-agent] Legacy-Secret-Auth #${legacySecretAuthCount} — Cutover auf HMAC nach Log-Pruefung (WP-D2).`
+        )
+        isCrossAgentRequest = true
+      }
+      // Falsches Secret: faellt wie bisher in den User-Session-Pfad → 401 dort.
+    }
 
     const serviceClient = createClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -4677,6 +4743,70 @@ export async function POST(request: NextRequest) {
 
     const internalApiBaseUrl = request.nextUrl.origin
 
+    // ── Request-Dedup (WP-D2): Insert-or-Return ─────────────────────
+    // Agent-Runs sind nicht idempotent. Erst diese Dedup macht den
+    // Bridge-Retry sicher — und sie ist zugleich der Replay-Schutz der
+    // HMAC-Auth (eine gesehene requestId startet nie einen zweiten Run).
+    if (dedupRequestId) {
+      const dedupInsert = await (serviceClient as any)
+        .from("agent_request_dedup")
+        .insert({
+          request_id: dedupRequestId,
+          conversation_id: asOptionalString(body.conversationId) ?? null,
+          company_id: crossAgentCompanyId,
+          trace_id: traceId
+        })
+
+      if (dedupInsert.error) {
+        if (dedupInsert.error.code === "23505") {
+          // Bereits gesehen: abgeschlossen → gespeicherte Antwort; laufend → 409.
+          const { data: existing } = await (serviceClient as any)
+            .from("agent_request_dedup")
+            .select("status, response")
+            .eq("request_id", dedupRequestId)
+            .maybeSingle()
+          if (existing?.status === "completed" && existing.response) {
+            return NextResponse.json({ ...existing.response, dedupHit: true })
+          }
+          return NextResponse.json(
+            { error: "Anfrage mit dieser Request-Id wird bereits verarbeitet.", code: "REQUEST_IN_PROGRESS" },
+            { status: 409 }
+          )
+        }
+        // Dedup-Infrastruktur defekt → fail-closed: ohne Dedup-Garantie
+        // darf kein Run starten (Retry koennte sonst doppelt ausfuehren).
+        console.error("[knowledge-agent] Dedup-Insert fehlgeschlagen:", dedupInsert.error.message)
+        return NextResponse.json(
+          { error: "Request-Deduplizierung nicht verfuegbar — Anfrage abgelehnt.", code: "DEDUP_UNAVAILABLE" },
+          { status: 503 }
+        )
+      }
+    }
+
+    const markDedupCompleted = async (result: AgentRunResult) => {
+      if (!dedupRequestId) return
+      // Contract-v2-Subset speichern (ohne richContent/toolActivities — Groesse).
+      const storedResponse = {
+        message: result.message,
+        contractVersion: 2,
+        ok: result.ok,
+        summary: result.summary,
+        changes: result.changes,
+        errors: result.errors,
+        conversationId: result.conversationId,
+        activeKnowledgeBaseId: result.activeKnowledgeBaseId,
+        toolActivities: []
+      }
+      const { error: dedupUpdateError } = await (serviceClient as any)
+        .from("agent_request_dedup")
+        .update({ status: "completed", response: storedResponse })
+        .eq("request_id", dedupRequestId)
+      if (dedupUpdateError) {
+        // Nicht fatal fuer DIESE Antwort — aber ein Retry wuerde 409 sehen.
+        console.error("[knowledge-agent] Dedup-Completion fehlgeschlagen:", dedupUpdateError.message)
+      }
+    }
+
     const wantsStream =
       body.stream === true ||
       request.headers.get("accept")?.toLowerCase().includes("text/event-stream") === true
@@ -4690,8 +4820,10 @@ export async function POST(request: NextRequest) {
         serviceClient,
         internalApiBaseUrl,
         crossAgentCompanyId,
-        enableKickoffStream: false
+        enableKickoffStream: false,
+        traceId
       })
+      await markDedupCompleted(result)
       return NextResponse.json(result)
     }
 
@@ -4718,8 +4850,10 @@ export async function POST(request: NextRequest) {
               internalApiBaseUrl,
               crossAgentCompanyId,
               enableKickoffStream: true,
+              traceId,
               emit: (event, payload) => send(event, payload)
             })
+            await markDedupCompleted(result)
             // Text was already streamed via text_delta events.
             // Rich content was sent via assistant_done event.
             send("done", {
