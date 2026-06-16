@@ -1785,11 +1785,31 @@ async function callSkillsApi(opts: {
   for (const [k, v] of Object.entries(opts.query || {})) {
     if (v != null) url.searchParams.set(k, v)
   }
-  const res = await fetch(url.toString(), {
-    method: opts.method,
-    headers: { "Content-Type": "application/json", "X-API-Key": SUPPORT_BACKEND_API_KEY },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  })
+  // WP-D4: Timeout + Graceful-Degradation. Ohne Timeout blockiert ein
+  // haengendes Skills-Backend den gesamten Agent-Run bis zum Plattform-Limit.
+  // Bei Timeout/Netzwerkfehler eine klare Meldung werfen (die per-Tool-
+  // Fehlerbehandlung der Workflow-Schleife laesst den Run weiterlaufen).
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      method: opts.method,
+      headers: { "Content-Type": "application/json", "X-API-Key": SUPPORT_BACKEND_API_KEY },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    clearTimeout(timeout)
+    const isTimeout = error instanceof Error && error.name === "AbortError"
+    throw new Error(
+      isTimeout
+        ? "Skills derzeit nicht verfügbar (Zeitüberschreitung). Bitte später erneut versuchen."
+        : "Skills derzeit nicht verfügbar (Verbindungsfehler). Bitte später erneut versuchen."
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
   const text = await res.text()
   let data: any = null
   try {
@@ -1821,6 +1841,58 @@ async function resolveActiveMailConfigId(
   return data?.id || null
 }
 
+// WP-D4: Tools, die eine kb_id aus Args/aktiver KB ableiten und KB-Daten
+// berühren. Jedes hier gelistete Tool wird vom zentralen Guard in executeTool
+// gegen die anfragende Company validiert. Pflege synchron zur Tool-Matrix
+// (docs/TENANT-GUARD-MATRIX.md). NICHT gelistet (mit Begründung): list_/create_
+// knowledge_bases (eigene company-scoped Query), present_* / web_search (kein
+// KB-Datenzugriff), Skills-Tools (Skills-API mit Company-Scope).
+const KB_SCOPED_TOOLS = new Set<string>([
+  "import_web_page", "list_documents", "get_knowledge_overview",
+  "generate_question_prompt", "search_knowledge", "debug_knowledge_search",
+  "search_chunks_by_text", "search_facts_by_text", "get_chunk_details",
+  "create_chunk", "add_fact_to_chunk", "rename_knowledge_base",
+  "rename_document", "rename_source", "update_chunk_content",
+  "update_fact_content", "delete_knowledge_base", "delete_document",
+  "delete_source", "delete_chunk", "delete_fact", "regenerate_chunk_facts",
+  "run_mismatch_analysis", "get_chunk_combine_suggestions",
+  "execute_chunk_combine", "upload_text_document", "upload_file_from_url",
+  "upload_attachment_to_kb", "verify_fact_findability", "analyze_attachment",
+  "set_active_knowledge_base",
+])
+
+// WP-D4: Tool-Results in der LLM-History auf 2 KB clippen — das volle
+// Ergebnis bleibt in toolExecutionRecords + tool_output.meta. Begrenzt
+// Kontext-Aufblähung und verhindert, dass große Roh-Results das Fenster fluten.
+const MAX_TOOL_RESULT_HISTORY_BYTES = 2048
+function clipToolResultForHistory(result: unknown): string {
+  let json: string
+  try {
+    json = JSON.stringify(result ?? {})
+  } catch {
+    json = '"[nicht serialisierbar]"'
+  }
+  if (json.length <= MAX_TOOL_RESULT_HISTORY_BYTES) return json
+  return json.slice(0, MAX_TOOL_RESULT_HISTORY_BYTES) + " …(gekürzt; vollständiges Ergebnis im Trace)"
+}
+
+// WP-D4 (Spiegel von WP-A2): Secret-artige Felder vor der Persistenz maskieren.
+// Tool-Outputs werden in agent_messages.tool_output gespeichert — kein
+// Passwort/Token/Key darf dort im Klartext landen.
+const SECRET_KEY_RE = /(pass|secret|token|api[-_]?key|authorization|credential|bearer)/i
+function redactSecretsDeep(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value == null) return value
+  if (Array.isArray(value)) return value.map((v) => redactSecretsDeep(v, depth + 1))
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SECRET_KEY_RE.test(k) && typeof v === "string" ? "[redacted]" : redactSecretsDeep(v, depth + 1)
+    }
+    return out
+  }
+  return value
+}
+
 async function executeTool(params: {
   toolName: string
   args: any
@@ -1843,6 +1915,26 @@ async function executeTool(params: {
     internalApiBaseUrl,
     attachments
   } = params
+
+  // ── WP-D4: Zentraler Tenant-Scope-Guard ────────────────────────────────
+  // resolveKnowledgeBaseId nimmt JEDE args.knowledge_base_id (Z.432). Im
+  // Cross-Agent-Modus ist authClient = serviceClient → RLS umgangen. Deshalb
+  // MUSS jedes Tool, das eine kb_id aus Args/aktiver KB ableitet, die KB
+  // gegen die anfragende Company validieren (assertKbBelongsToCompany wirft
+  // bei Fremd-Company, Z.467). Entitaeten (chunk/fact/document) sind ueber
+  // ihre KB-Bindung transitiv abgedeckt (getChunkAndDocument /
+  // resolveDocumentForKb / fact∈kb-Check), sobald die KB selbst validiert ist.
+  // NEUE kb-gebundene Tools MUESSEN hier eingetragen werden (Matrix:
+  // docs/TENANT-GUARD-MATRIX.md). Tools mit Sonder-Resolution (Name-Suche)
+  // scopen zusaetzlich inline — siehe set_active_knowledge_base.
+  if (KB_SCOPED_TOOLS.has(toolName)) {
+    const kbForScope = asOptionalString(args?.knowledge_base_id) || activeKnowledgeBaseId
+    // Fehlt eine KB ganz, wirft das Tool selbst die passende Meldung
+    // (requireKnowledgeBaseId). Eine vorhandene KB IMMER validieren.
+    if (kbForScope) {
+      await assertKbBelongsToCompany(serviceClient, kbForScope, defaultCompanyId, userId)
+    }
+  }
 
   switch (toolName as KnowledgeAgentToolName) {
     // ── Mail-Agent Skills (feature 002) ──────────────────────────────
@@ -2150,10 +2242,18 @@ async function executeTool(params: {
       }
 
       const searchName = byName as string
-      const { data: candidates, error } = await authClient
+      // WP-D4: Name-Suche scoped auf die Company. Im Cross-Agent-Modus
+      // umgeht serviceClient die RLS — ohne diesen Filter fände die Suche
+      // fremde KBs gleichen Namens (der zentrale Guard greift hier nicht,
+      // weil keine knowledge_base_id in den Args steht).
+      let candidateQuery = authClient
         .from("knowledge_bases")
         .select("id, name, company_id")
         .ilike("name", `%${searchName}%`)
+      if (defaultCompanyId) {
+        candidateQuery = candidateQuery.eq("company_id", defaultCompanyId)
+      }
+      const { data: candidates, error } = await candidateQuery
         .order("updated_at", { ascending: false })
         .limit(5)
 
@@ -4528,7 +4628,7 @@ async function runAgentWorkflow(params: {
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: JSON.stringify(execution?.result ?? {})
+          content: clipToolResultForHistory(execution?.result ?? {})
         })
 
         await persistAgentMessage({
@@ -4542,8 +4642,8 @@ async function runAgentWorkflow(params: {
           toolName,
           toolCallId: toolCall.id,
           toolStatus: "done",
-          toolInput: args,
-          toolOutput: execution?.result ?? {}
+          toolInput: redactSecretsDeep(args),
+          toolOutput: redactSecretsDeep(execution?.result ?? {})
         })
       } catch (error: any) {
         const errorMessage = error?.message || "Tool konnte nicht ausgeführt werden."
