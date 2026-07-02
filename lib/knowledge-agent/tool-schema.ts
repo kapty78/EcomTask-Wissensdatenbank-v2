@@ -243,7 +243,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     type: "function",
     function: {
       name: "create_chunk",
-      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument.",
+      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument. PFLICHT VORHER (wie bei Skills): search_chunks_by_text mit Fall- UND Kategorie-Begriff — existiert ein Chunk zur selben Kategorie, diesen via update_chunk_content ERWEITERN statt einen Parallel-Chunk zu streuen. Neue Chunks auf KATEGORIE-Ebene formulieren (der ausloesende Einzelfall ist Beispiel/Unterabschnitt, nicht das Thema). Hat einen Ueberlappungs-Guard: meldet er duplicate_suspects, den genannten Chunk erweitern statt force_create zu setzen.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -262,7 +262,11 @@ export const KNOWLEDGE_AGENT_TOOLS = [
           },
           content: {
             type: "string",
-            description: "Inhalt des neuen Chunks."
+            description: "Inhalt des neuen Chunks — vollstaendig, suchnah, auf Kategorie-Ebene formuliert."
+          },
+          force_create: {
+            type: "boolean",
+            description: "Nur true, wenn der Ueberlappungs-Guard duplicate_suspects gemeldet hat UND der User den bewussten Parallel-Chunk nach explizitem Hinweis bestaetigt hat."
           }
         },
         required: ["content"]

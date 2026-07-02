@@ -10,6 +10,7 @@ import { verifyCrossAgentHmac, timingSafeEqualStrings } from "@/lib/cross-agent-
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
+import { findOverlappingChunks } from "@/lib/knowledge-agent/chunk-overlap"
 import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
 import { generateFragenprompt } from "@/lib/knowledge-agent/question-prompt"
 import { processDocument } from "@/lib/cursor-documents/processing"
@@ -2919,6 +2920,55 @@ async function executeTool(params: {
 
       if (relationStatus === "other") {
         throw new Error("Dokument gehört nicht zur aktiven Wissensdatenbank.")
+      }
+
+      // Struktur-Waechter-Guard (2026-07-02): kein stilles Anlegen von
+      // Duplikat-/Streu-Chunks. Kandidaten = Chunks des Ziel-Dokuments +
+      // Chunks mit Facts in dieser KB (gleicher pragmatischer Scope wie
+      // search_chunks_by_text). success:false statt throw, damit der Agent
+      // den bestehenden Chunk erweitert statt blind zu retryen.
+      if (args?.force_create !== true) {
+        const candidateIds = new Set<string>()
+        const { data: docChunkRows } = await serviceClient
+          .from("document_chunks")
+          .select("id")
+          .eq("document_id", documentId)
+          .limit(100)
+        for (const r of (docChunkRows || []) as any[]) candidateIds.add(r.id)
+        const { data: kbFactRows } = await authClient
+          .from("knowledge_items")
+          .select("source_chunk")
+          .eq("knowledge_base_id", resolvedKbId)
+          .not("source_chunk", "is", null)
+          .limit(1000)
+        for (const r of (kbFactRows || []) as any[]) {
+          if (r.source_chunk) candidateIds.add(r.source_chunk)
+          if (candidateIds.size >= 300) break
+        }
+
+        const candidates: Array<{ id: string; content: string | null; document_id?: string | null }> = []
+        const idList = Array.from(candidateIds)
+        for (let i = 0; i < idList.length; i += 100) {
+          const slice = idList.slice(i, i + 100)
+          const { data: rows } = await serviceClient
+            .from("document_chunks")
+            .select("id, content, document_id")
+            .in("id", slice)
+          if (Array.isArray(rows)) candidates.push(...(rows as any[]))
+        }
+
+        const suspects = findOverlappingChunks(content, candidates)
+        if (suspects.length > 0) {
+          return {
+            result: {
+              success: false,
+              duplicate_check: "overlap_detected",
+              duplicate_suspects: suspects,
+              message:
+                "NICHT angelegt: Es existiert bereits mindestens ein Chunk mit starker inhaltlicher Ueberlappung. PFLICHT: den bestehenden Chunk via get_chunk_details + update_chunk_content ERWEITERN (Kategorie-Artikel statt Streu-Chunks — konkurrierende Chunks machen das RAG-Verhalten unvorhersagbar). Nur wenn der User einen bewussten Parallel-Chunk nach explizitem Hinweis bestaetigt hat: erneut mit force_create: true aufrufen.",
+            }
+          } as ToolExecutionResult
+        }
       }
 
       const { data: existingChunks, error: positionError } = await serviceClient
