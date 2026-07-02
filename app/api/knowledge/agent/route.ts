@@ -15,6 +15,11 @@ import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
 import { generateFragenprompt } from "@/lib/knowledge-agent/question-prompt"
 import { processDocument } from "@/lib/cursor-documents/processing"
 
+// Konsolidierungs-/Struktur-Läufe des Agenten überschreiten den Vercel-Default
+// von 300s (Befund 2026-07-02: Lauf bei ~300s gekillt, Dedup-Zeile blieb
+// in_progress, Orchestrator meldete fälschlich "keine Änderungen").
+export const maxDuration = 800
+
 type AgentHistoryMessage = {
   role: "assistant" | "user"
   content: string
@@ -4912,11 +4917,27 @@ export async function POST(request: NextRequest) {
           // Bereits gesehen: abgeschlossen → gespeicherte Antwort; laufend → 409.
           const { data: existing } = await (serviceClient as any)
             .from("agent_request_dedup")
-            .select("status, response")
+            .select("status, response, created_at")
             .eq("request_id", dedupRequestId)
             .maybeSingle()
           if (existing?.status === "completed" && existing.response) {
             return NextResponse.json({ ...existing.response, dedupHit: true })
+          }
+          // Eine in_progress-Zeile älter als der Stale-TTL stammt fast sicher
+          // von einem gekillten Function-Run (z.B. maxDuration erreicht). Der
+          // Run kann TEILWEISE geschrieben haben — das muss der Aufrufer
+          // erfahren, statt ewig "wird verarbeitet" zu sehen.
+          const STALE_RUN_TTL_MS = 15 * 60 * 1000
+          const startedAt = existing?.created_at ? Date.parse(existing.created_at) : NaN
+          if (existing?.status === "in_progress" && Number.isFinite(startedAt) && Date.now() - startedAt > STALE_RUN_TTL_MS) {
+            return NextResponse.json(
+              {
+                error:
+                  "Der fruehere Lauf mit dieser Request-Id wurde vermutlich abgebrochen (aelter als 15 Minuten, kein Ergebnis gespeichert). Er kann bereits Teil-Aenderungen geschrieben haben — Bestand pruefen statt blind neu starten.",
+                code: "REQUEST_STALE"
+              },
+              { status: 409 }
+            )
           }
           return NextResponse.json(
             { error: "Anfrage mit dieser Request-Id wird bereits verarbeitet.", code: "REQUEST_IN_PROGRESS" },
