@@ -49,7 +49,7 @@ const ServerEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
 
   // — Modell-Auswahl (Legacy-Kette siehe buildServerEnv) —
-  KNOWLEDGE_AGENT_MODEL: z.string().min(1).default("gpt-5.5-2026-04-23"),
+  KNOWLEDGE_AGENT_MODEL: z.string().min(1).default("gpt-5.4"),
 })
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>
