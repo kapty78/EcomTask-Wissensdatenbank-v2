@@ -40,6 +40,10 @@ type AgentRequestBody = {
   stream?: boolean
   attachments?: AgentAttachment[]
   companyId?: string | null
+  /** SOTA-Block 3 (Budget-Vertrag): Zeitbudget des Aufrufers (Orchestrator-
+   *  Soft-Deadline minus Synthese-Reserve). Der Loop erzwingt VOR Ablauf eine
+   *  Abschluss-Synthese, statt in den Plattform-Kill zu laufen. */
+  budget?: { deadline_ms?: number }
 }
 
 type AgentToolActivity = {
@@ -1867,19 +1871,84 @@ const KB_SCOPED_TOOLS = new Set<string>([
   "set_active_knowledge_base",
 ])
 
-// WP-D4: Tool-Results in der LLM-History auf 2 KB clippen — das volle
-// Ergebnis bleibt in toolExecutionRecords + tool_output.meta. Begrenzt
-// Kontext-Aufblähung und verhindert, dass große Roh-Results das Fenster fluten.
+// WP-D4 / SOTA-Block 3: Tool-Results in der LLM-History budgetieren.
+// KRITISCHER Fix gegenueber dem alten blinden Byte-Slice: der zerschnitt
+// get_chunk_details mitten im JSON — das Modell merge-te seine Aenderung in
+// den GEKUERZTEN Text und schrieb ihn per update_chunk_content zurueck
+// (stiller Datenverlust am Chunk-Ende), oder loopte auf der Suche nach dem
+// "Trace" bis MAX_ROUNDS. Jetzt:
+//   1. Detail-Tools, deren Vollergebnis fuer Read-Modify-Write GEBRAUCHT
+//      wird, sind vom Clipping ausgenommen (grosszuegige Sicherheitsgrenze).
+//   2. Alle anderen Ergebnisse werden STRUKTURELL gekuerzt (Array-Items
+//      droppen + _omitted-Zaehler, lange Strings kappen) — das JSON bleibt
+//      IMMER valide und traegt einen maschinenlesbaren Hinweis statt eines
+//      Verweises auf einen fuer das Modell unerreichbaren "Trace".
 const MAX_TOOL_RESULT_HISTORY_BYTES = 2048
-function clipToolResultForHistory(result: unknown): string {
+/** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
+const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
+/** Absolute Sicherheitsgrenze auch fuer Detail-Tools (~16k Tokens). */
+const FULL_RESULT_MAX_BYTES = 64_000
+const CLIP_ARRAY_CAP = 8
+const CLIP_STRING_CAP = 400
+
+function clipValue(value: unknown, depth: number): unknown {
+  if (value == null) return value
+  if (typeof value === "string") {
+    return value.length > CLIP_STRING_CAP
+      ? value.slice(0, CLIP_STRING_CAP) + ` …[+${value.length - CLIP_STRING_CAP} Zeichen]`
+      : value
+  }
+  if (typeof value !== "object") return value
+  if (depth > 6) return "[verschachtelt gekuerzt]"
+  if (Array.isArray(value)) {
+    if (value.length <= CLIP_ARRAY_CAP) return value.map((v) => clipValue(v, depth + 1))
+    return [
+      ...value.slice(0, CLIP_ARRAY_CAP).map((v) => clipValue(v, depth + 1)),
+      { _omitted: value.length - CLIP_ARRAY_CAP, hinweis: "weitere Eintraege weggelassen — bei Bedarf gezielter suchen/filtern" },
+    ]
+  }
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = clipValue(v, depth + 1)
+  return out
+}
+
+function clipToolResultForHistory(toolName: string, result: unknown): string {
   let json: string
   try {
     json = JSON.stringify(result ?? {})
   } catch {
     json = '"[nicht serialisierbar]"'
   }
+  if (FULL_RESULT_TOOLS.has(toolName)) {
+    if (json.length <= FULL_RESULT_MAX_BYTES) return json
+    // Chunk jenseits der Sicherheitsgrenze: NIEMALS still kappen und ein
+    // Read-Modify-Write darauf zulassen — explizit als unvollstaendig markieren.
+    return JSON.stringify({
+      _unvollstaendig: true,
+      hinweis:
+        "Chunk-Ergebnis > 64KB — Volltext hier NICHT vollstaendig. KEIN update_chunk_content auf Basis dieses Ergebnisses durchfuehren; Chunk zuerst in kleinere Chunks aufteilen.",
+      auszug: json.slice(0, 8_000),
+    })
+  }
   if (json.length <= MAX_TOOL_RESULT_HISTORY_BYTES) return json
-  return json.slice(0, MAX_TOOL_RESULT_HISTORY_BYTES) + " …(gekürzt; vollständiges Ergebnis im Trace)"
+  try {
+    const compacted = JSON.stringify(clipValue(result ?? {}, 0))
+    if (compacted.length <= MAX_TOOL_RESULT_HISTORY_BYTES * 4) return compacted
+    // Immer noch zu gross: nur Skalar-Felder + Array-Umfaenge behalten.
+    const scalars: Record<string, unknown> = { _gekuerzt: true, hinweis: "Ergebnis zu gross — Kernfelder unten; bei Bedarf gezielter abfragen." }
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      for (const [k, v] of Object.entries(result as Record<string, unknown>)) {
+        if (v == null) continue
+        if (typeof v === "string") scalars[k] = v.slice(0, 160)
+        else if (typeof v === "number" || typeof v === "boolean") scalars[k] = v
+        else if (Array.isArray(v)) scalars[k] = `[${v.length} Eintraege]`
+        if (Object.keys(scalars).length >= 14) break
+      }
+    }
+    return JSON.stringify(scalars)
+  } catch {
+    return JSON.stringify({ _gekuerzt: true, hinweis: "Ergebnis zu gross und nicht kompaktierbar." })
+  }
 }
 
 // WP-D4 (Spiegel von WP-A2): Secret-artige Felder vor der Persistenz maskieren.
@@ -4464,7 +4533,56 @@ async function runAgentWorkflow(params: {
   const toolExecutionRecords: ToolExecutionRecord[] = []
   const maxToolRounds = 14
 
+  // ── SOTA-Block 3: Zeitbudget-Vertrag ────────────────────────────────────
+  // Der Aufrufer (Support-AI-Orchestrator) gibt sein verbleibendes Turn-
+  // Budget mit. Der Loop erzwingt VOR Ablauf eine Abschluss-Synthese statt
+  // in den Plattform-Kill (maxDuration) oder die Orchestrator-Deadline zu
+  // laufen — vorher liefen Konsolidierungs-Jobs ~250s und starben trotzdem.
+  const runStartedAt = Date.now()
+  const WDB_DEFAULT_DEADLINE_MS = 600_000
+  const FINALIZE_RESERVE_MS = 30_000
+  const requestedDeadlineMs = Number((params.body as any)?.budget?.deadline_ms)
+  const deadlineMs = Number.isFinite(requestedDeadlineMs) && requestedDeadlineMs > 0
+    ? Math.max(30_000, Math.min(WDB_DEFAULT_DEADLINE_MS, requestedDeadlineMs))
+    : WDB_DEFAULT_DEADLINE_MS
+  let budgetExhausted = false
+  // Vollergebnisse der FULL_RESULT_TOOLS (bis 64KB pro Chunk) duerfen nicht
+  // fuer alle Restrunden verbatim in der History bleiben — nach 2 Runden
+  // werden sie in-place durch einen Digest ersetzt (Review-Finding). Vor
+  // einem update_chunk_content muss der Agent den Chunk ohnehin frisch lesen.
+  const fullResultLedger: Array<{ index: number; round: number; toolName: string; digested?: boolean }> = []
+
   for (let round = 0; round < maxToolRounds; round++) {
+    for (const entry of fullResultLedger) {
+      if (entry.digested || entry.round > round - 2) continue
+      const msg = conversation[entry.index]
+      if (msg?.role === "tool" && typeof msg.content === "string") {
+        msg.content = JSON.stringify({
+          _digest: true,
+          tool: entry.toolName,
+          gelesen_in_runde: entry.round + 1,
+          hinweis:
+            "Volltext wurde in einer frueheren Runde gelesen und ist hier entfernt. VOR einem update_chunk_content den Chunk ZWINGEND erneut per get_chunk_details lesen — niemals aus dem Gedaechtnis schreiben.",
+        })
+      }
+      entry.digested = true
+    }
+
+    const elapsedMs = Date.now() - runStartedAt
+    if (round > 0 && elapsedMs > deadlineMs - FINALIZE_RESERVE_MS) {
+      console.warn(`[knowledge-agent] Zeitbudget erreicht nach Runde ${round} (${Math.round(elapsedMs / 1000)}s/${Math.round(deadlineMs / 1000)}s) — erzwinge Abschluss-Synthese.`)
+      budgetExhausted = true
+      break
+    }
+    // Konvergenz-Druck: das Modell sieht sein Restbudget und priorisiert
+    // Abschluss + gebatchte Verifikation statt Verify-Schleifen pro Schritt.
+    if (round > 0) {
+      const remainingS = Math.max(0, Math.round((deadlineMs - elapsedMs) / 1000))
+      conversation.push({
+        role: "system",
+        content: `BUDGET: Runde ${round + 1}/${maxToolRounds}, noch ~${remainingS}s. Priorisiere Abschluss. Verifikation BATCHEN (eine Pruefung nach allen Schreibschritten, nicht pro Schritt). Unabhaengige Tool-Calls in EINER Antwort buendeln.`,
+      })
+    }
     // =====================================================================
     // STREAMING: Use OpenAI streaming API for real-time token delivery
     // =====================================================================
@@ -4683,8 +4801,11 @@ async function runAgentWorkflow(params: {
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: clipToolResultForHistory(execution?.result ?? {})
+          content: clipToolResultForHistory(toolName, execution?.result ?? {})
         })
+        if (FULL_RESULT_TOOLS.has(toolName)) {
+          fullResultLedger.push({ index: conversation.length - 1, round, toolName })
+        }
 
         await persistAgentMessage({
           serviceClient,
@@ -4757,17 +4878,72 @@ async function runAgentWorkflow(params: {
     knowledgeBaseId: currentKnowledgeBaseId
   })
 
-  const fallbackMessage =
-    "Ich habe mehrere Tool-Schritte ausgeführt, konnte aber keine stabile Abschlussantwort erzeugen. Bitte formuliere die Anfrage etwas konkreter."
+  // ── SOTA-Block 3: Erzwungene Abschluss-Synthese ─────────────────────────
+  // Statt eines statischen "konnte keine stabile Antwort erzeugen" fasst das
+  // Modell in EINEM tool-freien Call zusammen: was wurde erledigt (Chunks/
+  // IDs), was wurde verifiziert, was ist offen. Der Aufrufer bekommt damit
+  // einen verwertbaren Zustandsbericht statt eines Ratespiels.
+  const exitCode = budgetExhausted ? "WDB_DEADLINE" : "MAX_ROUNDS"
+  conversation.push({
+    role: "system",
+    content: budgetExhausted
+      ? "ZEITBUDGET ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist."
+      : "RUNDEN-LIMIT ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist.",
+  })
+  let synthText = ""
+  try {
+    // tool_choice:"none" verhindert weitere Tool-Calls hart; tools bleibt im
+    // Call (das Weglassen ist gegen den Prod-Account nicht verifizierbar —
+    // siehe Support AI route.ts, gleiche Begruendung). 25s-Deckel, damit die
+    // Finalize-Reserve haelt.
+    const synthStream = await openai.chat.completions.create(
+      {
+        model: AGENT_MODEL,
+        messages: conversation,
+        tools: KNOWLEDGE_AGENT_TOOLS as any,
+        tool_choice: "none",
+        stream: true,
+      },
+      { signal: AbortSignal.timeout(Math.max(10_000, FINALIZE_RESERVE_MS - 5_000)) }
+    )
+    for await (const chunk of synthStream) {
+      const delta = chunk.choices?.[0]?.delta
+      if (delta?.content) {
+        synthText += delta.content
+        emit("text_delta", { text: delta.content })
+      }
+    }
+  } catch (synthError) {
+    console.warn("[knowledge-agent] Abschluss-Synthese fehlgeschlagen/timeout:", synthError)
+  }
+
+  const fallbackMessage = synthText.trim().length > 0
+    ? synthText.trim()
+    : "Ich habe mehrere Tool-Schritte ausgeführt, konnte aber keine stabile Abschlussantwort erzeugen. Die ausgeführten Schritte stehen im Trace — bitte Stand per Read-Tool prüfen, bevor etwas wiederholt wird."
   const fallbackRichContent = collectToolDerivedUi({
     finalText: fallbackMessage,
     records: toolExecutionRecords,
     activeKnowledgeBaseId: currentKnowledgeBaseId
   })
 
-  emit("text_delta", { text: fallbackMessage })
+  if (synthText.trim().length === 0) {
+    emit("text_delta", { text: fallbackMessage })
+  }
   emit("assistant_done", {
     richContent: fallbackRichContent.blocks.length > 0 ? fallbackRichContent : null
+  })
+
+  // Abschluss-Antwort persistieren (Parity mit dem normalen Final-Pfad) —
+  // vorher verschwand der Max-Rounds-Bericht aus der Conversation-Historie.
+  await persistAgentMessage({
+    serviceClient,
+    conversationId,
+    userId: user.id,
+    companyId: currentCompanyId,
+    knowledgeBaseId: currentKnowledgeBaseId,
+    role: "assistant",
+    content: fallbackMessage,
+    metadata: toolActivities.length > 0 ? { toolActivities, ...(traceId ? { trace_id: traceId } : {}) } : (traceId ? { trace_id: traceId } : undefined)
   })
 
   return {
@@ -4777,11 +4953,22 @@ async function runAgentWorkflow(params: {
     activeKnowledgeBaseId: currentKnowledgeBaseId,
     conversationId,
     contractVersion: 2,
-    // Max-Rounds ohne stabile Antwort ist KEIN Erfolg (WP-D1/C5).
+    // Abbruch ohne stabile Antwort ist KEIN Erfolg (WP-D1/C5).
     ok: false,
     summary: fallbackMessage.slice(0, 500),
     changes: collectedChanges,
-    errors: collectedErrors.length > 0 ? collectedErrors : [{ tool: "runner", code: "MAX_ROUNDS", message: "max_rounds_reached" }]
+    // Exit-Grund IMMER anhaengen (nicht nur bei leeren Tool-Fehlern) — der
+    // Orchestrator muss wissen, WARUM der Lauf endete (Deadline vs. Runden).
+    errors: [
+      ...collectedErrors,
+      {
+        tool: "runner",
+        code: exitCode,
+        message: budgetExhausted
+          ? "Zeitbudget erreicht — Lauf kontrolliert beendet (Teil-Aenderungen moeglich, Stand siehe Abschlussantwort)."
+          : "max_rounds_reached"
+      }
+    ]
   }
 }
 
@@ -5009,6 +5196,17 @@ export async function POST(request: NextRequest) {
           )
         }
 
+        // SOTA-Block 3: SSE-Heartbeat. Die Bridge der Support AI faehrt einen
+        // 90s-Idle-Timeout — ohne Ping riss ein GESUNDER Stream bei jeder
+        // laengeren stillen Phase (grosser LLM-Prefill, langsames Tool) ab
+        // und loeste den teuren Fallback-/Busy-Poll-Pfad aus. Der Ping haelt
+        // den Idle-Timer am Leben; Konsumenten ignorieren unbekannte Events.
+        const pingTimer = setInterval(() => {
+          try {
+            send("ping", { t: Date.now() })
+          } catch { /* Verbindung weg — Ping ist best-effort, Lauf laeuft weiter */ }
+        }, 12_000)
+
         ;(async () => {
           try {
             send("ready", { ok: true })
@@ -5042,6 +5240,7 @@ export async function POST(request: NextRequest) {
               error: error?.message || "Interner Fehler im Agenten."
             })
           } finally {
+            clearInterval(pingTimer)
             if (!closed) {
               closed = true
               controller.close()
