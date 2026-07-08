@@ -36,8 +36,9 @@ zusätzlich · **Q** = eigene company-scoped Query · **I** = inline Sonder-Scop
 | # | Tool | Guard | Begründung |
 |---|------|-------|-----------|
 | 1 | search_knowledge | Z | kb via Args → zentral validiert |
-| 2 | search_chunks_by_text | Z | kb via Args |
-| 3 | search_facts_by_text | Z | kb via Args |
+| 2 | search_chunks_by_text | Z | kb via Args (Legacy-Alias, nicht mehr im LLM-Schema) |
+| 3 | search_facts_by_text | Z | kb via Args (Legacy-Alias, nicht mehr im LLM-Schema) |
+| 3b | search_kb_text | Z | kb via Args — Batch-Textsuche (Chunks+Fakten, RPC search_kb_text_batch, SECURITY INVOKER/RLS) |
 | 4 | get_knowledge_overview | Z | kb via Args |
 | 5 | generate_question_prompt | Z | kb via Args |
 | 6 | debug_knowledge_search | Z | kb via Args |

@@ -154,9 +154,9 @@ export const KNOWLEDGE_AGENT_TOOLS = [
   {
     type: "function",
     function: {
-      name: "search_chunks_by_text",
+      name: "search_kb_text",
       description:
-        "Wörtliche Substring-Suche (ILIKE) auf chunk_content — KEIN Embedding, KEIN Ranking. Nutze dies wenn du vermutest dass das Wissen im KB steht aber die semantische Suche es nicht findet ('try & error': finde alle Chunks die genau das Wort enthalten). Pro Chunk werden auch die Anzahl Fakten und community_id/theme zurückgegeben.",
+        "Wörtliche Textsuche (ILIKE, KEIN Embedding) über Chunk-Texte UND Fakten für MEHRERE Begriffe in EINEM Aufruf (eine DB-Abfrage). IMMER alle Begriffe eines Arbeitsschritts bündeln — Fall-Stichwort, Kategorie-Begriff, Synonyme, Eigennamen — statt pro Begriff einzeln zu suchen. Ergebnis pro Begriff: passende Chunks (chunk_id, Preview, fact_count) und Fakten (fact_id, content, question, source_chunk). Nutze dies zur Duplikat-Prüfung vor create_chunk/create_skill und wenn die semantische Suche nichts findet.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -165,55 +165,27 @@ export const KNOWLEDGE_AGENT_TOOLS = [
             type: "string",
             description: "Optional: KB-ID. Sonst aktive KB."
           },
-          query: {
-            type: "string",
-            description: "Substring der im chunk_content vorkommen soll. Z.B. ein Eigenname, eine Telefonnummer, ein Domänen-Begriff."
+          queries: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 10,
+            description: "1–10 Suchbegriffe/Substrings. ALLE relevanten Begriffe in EINEM Aufruf bündeln, nicht mehrfach aufrufen."
           },
-          limit: {
+          chunk_limit: {
             type: "integer",
             minimum: 1,
-            maximum: 50,
-            description: "Maximale Trefferzahl (Standard 20)."
-          }
-        },
-        required: ["query"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_facts_by_text",
-      description:
-        "Wörtliche Substring-Suche (ILIKE) auf knowledge_items.content / .question — findet Fakten unabhängig vom Embedding. Nutze dies wenn ein Begriff im KB sein müsste aber die semantische Suche ihn nicht findet, oder wenn du nach existierenden Fakten zu einem Thema suchst bevor du neue erstellst (Duplikate-Vermeidung).",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          knowledge_base_id: {
-            type: "string",
-            description: "Optional: KB-ID. Sonst aktive KB."
+            maximum: 20,
+            description: "Max. Chunk-Treffer pro Begriff (Standard 5)."
           },
-          query: {
-            type: "string",
-            description: "Substring der in der Fakt-content oder -question vorkommen soll."
-          },
-          fact_type: {
-            type: "string",
-            description: "Optional: nur Fakten dieses fact_type (z.B. 'rule', 'spec', 'contact')."
-          },
-          source_filter: {
-            type: "string",
-            description: "Optional: nur Fakten aus Dokumenten mit diesem Namen."
-          },
-          limit: {
+          fact_limit: {
             type: "integer",
             minimum: 1,
-            maximum: 50,
-            description: "Maximale Trefferzahl (Standard 30)."
+            maximum: 30,
+            description: "Max. Fakt-Treffer pro Begriff (Standard 6)."
           }
         },
-        required: ["query"]
+        required: ["queries"]
       }
     }
   },
@@ -221,7 +193,8 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     type: "function",
     function: {
       name: "get_chunk_details",
-      description: "Lädt Details eines Chunks inkl. Fakten aus der aktiven Wissensdatenbank.",
+      description:
+        "Lädt einen oder MEHRERE Chunks (Volltext + Fakten) in EINEM Aufruf. Für mehrere Chunks IMMER chunk_ids als Array nutzen statt das Tool mehrfach aufzurufen. chunk_id ODER chunk_ids ist Pflicht.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -232,10 +205,16 @@ export const KNOWLEDGE_AGENT_TOOLS = [
           },
           chunk_id: {
             type: "string",
-            description: "UUID des Chunks."
+            description: "UUID eines einzelnen Chunks (Alternative zu chunk_ids)."
+          },
+          chunk_ids: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 8,
+            description: "UUIDs mehrerer Chunks — bevorzugt, wenn mehr als ein Chunk gelesen werden soll."
           }
-        },
-        required: ["chunk_id"]
+        }
       }
     }
   },
@@ -243,7 +222,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     type: "function",
     function: {
       name: "create_chunk",
-      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument. PFLICHT VORHER (wie bei Skills): search_chunks_by_text mit Fall- UND Kategorie-Begriff — existiert ein Chunk zur selben Kategorie, diesen via update_chunk_content ERWEITERN statt einen Parallel-Chunk zu streuen. Neue Chunks auf KATEGORIE-Ebene formulieren (der ausloesende Einzelfall ist Beispiel/Unterabschnitt, nicht das Thema). Hat einen Ueberlappungs-Guard: meldet er duplicate_suspects, den genannten Chunk erweitern statt force_create zu setzen.",
+      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument. PFLICHT VORHER (wie bei Skills): search_kb_text mit Fall- UND Kategorie-Begriff (beide im queries-Array EINES Aufrufs) — existiert ein Chunk zur selben Kategorie, diesen via update_chunk_content ERWEITERN statt einen Parallel-Chunk zu streuen. Neue Chunks auf KATEGORIE-Ebene formulieren (der ausloesende Einzelfall ist Beispiel/Unterabschnitt, nicht das Thema). Hat einen Ueberlappungs-Guard: meldet er duplicate_suspects, den genannten Chunk erweitern statt force_create zu setzen.",
       parameters: {
         type: "object",
         additionalProperties: false,

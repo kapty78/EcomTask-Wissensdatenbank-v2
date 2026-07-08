@@ -489,8 +489,12 @@ async function assertKbBelongsToCompany(
   return { company_id: kb.company_id, sharing: kb.sharing }
 }
 
+// Alt-Tools sind aus dem LLM-Schema entfernt (ersetzt durch search_kb_text),
+// bleiben aber im Executor als Alias ausfuehrbar (History-Replays, alte Plaene).
+type LegacyKnowledgeAgentToolName = "search_chunks_by_text" | "search_facts_by_text"
+
 function buildToolLabel(toolName: string, args: any) {
-  switch (toolName as KnowledgeAgentToolName) {
+  switch (toolName as KnowledgeAgentToolName | LegacyKnowledgeAgentToolName) {
     case "web_search":
       return `Websuche: "${clip(String(args?.query || ""), 70)}"`
     case "import_web_page":
@@ -511,8 +515,16 @@ function buildToolLabel(toolName: string, args: any) {
       return `Chunks per Text suchen: "${clip(String(args?.query || ""), 50)}"`
     case "search_facts_by_text":
       return `Fakten per Text suchen: "${clip(String(args?.query || ""), 50)}"`
-    case "get_chunk_details":
-      return `Chunk laden: ${String(args?.chunk_id || "").slice(0, 8)}`
+    case "search_kb_text": {
+      const queries = Array.isArray(args?.queries) ? args.queries.map((q: any) => String(q ?? "").trim()).filter(Boolean) : []
+      return `Textsuche (${queries.length} Begriffe): ${clip(queries.map((q: string) => `"${q}"`).join(", "), 70)}`
+    }
+    case "get_chunk_details": {
+      const batchIds = Array.isArray(args?.chunk_ids) ? args.chunk_ids.filter(Boolean) : []
+      if (batchIds.length > 1) return `Chunks laden: ${batchIds.length} Stück`
+      const singleId = String(args?.chunk_id || batchIds[0] || "")
+      return `Chunk laden: ${singleId.slice(0, 8)}`
+    }
     case "create_chunk":
       return `Chunk erstellen${args?.document_id ? ` für ${String(args.document_id).slice(0, 8)}` : ""}`
     case "add_fact_to_chunk":
@@ -840,42 +852,49 @@ function collectToolDerivedUi(params: {
 
       case "get_chunk_details": {
         const kbId = activeKnowledgeBaseId
-        const chunkId = asOptionalString(result?.chunk?.id)
-        if (chunkId) {
-          pushReference({
-            type: "chunk",
-            id: chunkId,
-            label: `Chunk ${chunkId.slice(0, 8)}`,
-            knowledgeBaseId: kbId,
-            chunkId,
-            documentId: asOptionalString(result?.chunk?.document_id)
-          })
-        }
-
-        const facts = Array.isArray(result?.facts) ? result.facts : []
-        if (facts.length > 0) {
-          blocks.push({
-            type: "table",
-            title: "Chunk-Fakten",
-            columns: ["Typ", "Inhalt", "ID"],
-            rows: facts.slice(0, 10).map((fact: any) => [
-              asStringCell(fact?.fact_type || "fact", 24),
-              asStringCell(fact?.content || "", 110),
-              asStringCell(fact?.id || "", 60)
-            ])
-          })
-
-          for (const fact of facts.slice(0, 20)) {
-            const factId = asOptionalString(fact?.id)
-            if (!factId) continue
+        // Einzel-Format ({chunk, facts}) UND Batch-Format ({chunks: [...]})
+        // auf dieselbe Entry-Liste normalisieren.
+        const entries: any[] = Array.isArray(result?.chunks) && result.chunks.length > 0
+          ? result.chunks
+          : [result]
+        for (const entry of entries) {
+          const chunkId = asOptionalString(entry?.chunk?.id)
+          if (chunkId) {
             pushReference({
-              type: "fact",
-              id: factId,
-              label: asStringCell(fact?.content || `Fakt ${factId.slice(0, 8)}`, 90),
+              type: "chunk",
+              id: chunkId,
+              label: `Chunk ${chunkId.slice(0, 8)}`,
               knowledgeBaseId: kbId,
-              factId,
-              chunkId: chunkId || null
+              chunkId,
+              documentId: asOptionalString(entry?.chunk?.document_id)
             })
+          }
+
+          const facts = Array.isArray(entry?.facts) ? entry.facts : []
+          if (facts.length > 0) {
+            blocks.push({
+              type: "table",
+              title: chunkId ? `Chunk-Fakten (${chunkId.slice(0, 8)})` : "Chunk-Fakten",
+              columns: ["Typ", "Inhalt", "ID"],
+              rows: facts.slice(0, 10).map((fact: any) => [
+                asStringCell(fact?.fact_type || "fact", 24),
+                asStringCell(fact?.content || "", 110),
+                asStringCell(fact?.id || "", 60)
+              ])
+            })
+
+            for (const fact of facts.slice(0, 20)) {
+              const factId = asOptionalString(fact?.id)
+              if (!factId) continue
+              pushReference({
+                type: "fact",
+                id: factId,
+                label: asStringCell(fact?.content || `Fakt ${factId.slice(0, 8)}`, 90),
+                knowledgeBaseId: kbId,
+                factId,
+                chunkId: chunkId || null
+              })
+            }
           }
         }
         break
@@ -1860,7 +1879,7 @@ async function resolveActiveMailConfigId(
 const KB_SCOPED_TOOLS = new Set<string>([
   "import_web_page", "list_documents", "get_knowledge_overview",
   "generate_question_prompt", "search_knowledge", "debug_knowledge_search",
-  "search_chunks_by_text", "search_facts_by_text", "get_chunk_details",
+  "search_chunks_by_text", "search_facts_by_text", "search_kb_text", "get_chunk_details",
   "create_chunk", "add_fact_to_chunk", "rename_knowledge_base",
   "rename_document", "rename_source", "update_chunk_content",
   "update_fact_content", "delete_knowledge_base", "delete_document",
@@ -1869,6 +1888,19 @@ const KB_SCOPED_TOOLS = new Set<string>([
   "execute_chunk_combine", "upload_text_document", "upload_file_from_url",
   "upload_attachment_to_kb", "verify_fact_findability", "analyze_attachment",
   "set_active_knowledge_base",
+])
+
+// Read-only-Tools ohne Seiteneffekte auf den Session-Kontext: duerfen innerhalb
+// einer Runde PARALLEL laufen (Promise.all). Schreib-Tools und
+// set_active_knowledge_base (mutiert currentKnowledgeBaseId) bleiben seriell
+// und wirken als Barriere — nachfolgende Reads sehen den neuen Kontext.
+const PARALLEL_SAFE_TOOLS = new Set<string>([
+  "list_knowledge_bases", "list_documents", "search_knowledge",
+  "debug_knowledge_search", "search_kb_text", "search_chunks_by_text",
+  "search_facts_by_text", "get_chunk_details", "get_knowledge_overview",
+  "get_chunk_combine_suggestions", "list_skills", "verify_fact_findability",
+  "generate_question_prompt", "web_search", "analyze_attachment",
+  "present_code_block", "present_table", "present_image", "present_interactive_choices",
 ])
 
 // WP-D4 / SOTA-Block 3: Tool-Results in der LLM-History budgetieren.
@@ -1884,6 +1916,9 @@ const KB_SCOPED_TOOLS = new Set<string>([
 //      IMMER valide und traegt einen maschinenlesbaren Hinweis statt eines
 //      Verweises auf einen fuer das Modell unerreichbaren "Trace".
 const MAX_TOOL_RESULT_HISTORY_BYTES = 2048
+/** Batch-Tools ersetzen VIELE Einzel-Calls — ihr Ergebnis darf entsprechend
+ *  mehr History-Budget tragen (1 × 16KB statt 24 × 2KB). */
+const HISTORY_BUDGET_BY_TOOL: Record<string, number> = { search_kb_text: 16_000 }
 /** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
 const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
 /** Absolute Sicherheitsgrenze auch fuer Detail-Tools (~16k Tokens). */
@@ -1930,10 +1965,11 @@ function clipToolResultForHistory(toolName: string, result: unknown): string {
       auszug: json.slice(0, 8_000),
     })
   }
-  if (json.length <= MAX_TOOL_RESULT_HISTORY_BYTES) return json
+  const historyBudget = HISTORY_BUDGET_BY_TOOL[toolName] ?? MAX_TOOL_RESULT_HISTORY_BYTES
+  if (json.length <= historyBudget) return json
   try {
     const compacted = JSON.stringify(clipValue(result ?? {}, 0))
-    if (compacted.length <= MAX_TOOL_RESULT_HISTORY_BYTES * 4) return compacted
+    if (compacted.length <= historyBudget * 4) return compacted
     // Immer noch zu gross: nur Skalar-Felder + Array-Umfaenge behalten.
     const scalars: Record<string, unknown> = { _gekuerzt: true, hinweis: "Ergebnis zu gross — Kernfelder unten; bei Bedarf gezielter abfragen." }
     if (result && typeof result === "object" && !Array.isArray(result)) {
@@ -2011,7 +2047,7 @@ async function executeTool(params: {
     }
   }
 
-  switch (toolName as KnowledgeAgentToolName) {
+  switch (toolName as KnowledgeAgentToolName | LegacyKnowledgeAgentToolName) {
     // ── Mail-Agent Skills (feature 002) ──────────────────────────────
     case "list_skills": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skills nicht verfügbar.")
@@ -2692,7 +2728,7 @@ async function executeTool(params: {
           `0 chunks returned: ${raw} raw hits → ${meta.deduplicated_chunks ?? 0} dedup → ${droppedThr} dropped < ${minThr} threshold, ${droppedAmb} dropped by ambiguous floor.`
         )
         if (raw === 0) {
-          verdicts.push("Keine einzige Vector/Hybrid/Graph-Channel hat überhaupt Treffer geliefert. Embedding-Mismatch — der Inhalt ist semantisch sehr weit weg von der Anfrage. Probiere search_chunks_by_text mit Schlüsselwörtern aus der Anfrage.")
+          verdicts.push("Keine einzige Vector/Hybrid/Graph-Channel hat überhaupt Treffer geliefert. Embedding-Mismatch — der Inhalt ist semantisch sehr weit weg von der Anfrage. Probiere search_kb_text mit Schlüsselwörtern aus der Anfrage (alle Begriffe in EINEM Aufruf).")
         } else if (droppedThr > 0 || droppedAmb > 0) {
           verdicts.push(`Treffer waren da, wurden aber gefiltert. Wenn der erwartete Chunk dabei war: Fakt-Wording schärfen oder explizit zur Anfrage passenden Fakt anlegen.`)
         }
@@ -2758,6 +2794,63 @@ async function executeTool(params: {
             matched_facts: (c.matched_facts || []).slice(0, 5),
           })),
         }
+      } as ToolExecutionResult
+    }
+
+    case "search_kb_text": {
+      // Batch-Textsuche: ALLE Begriffe in EINER Postgres-RPC (Chunks + Fakten),
+      // ersetzt die frueheren Einzel-Calls search_chunks_by_text/-facts_by_text
+      // (pro Begriff 2 Tool-Calls x bis zu 12 DB-Roundtrips → jetzt 1 RPC).
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      const rawQueries: unknown[] = Array.isArray(args?.queries)
+        ? args.queries
+        : typeof args?.query === "string" ? [args.query] : []
+      const queries = Array.from(
+        new Set(rawQueries.map((q) => String(q ?? "").trim()).filter((q) => q.length >= 2))
+      ).slice(0, 10)
+      if (queries.length === 0) {
+        throw new Error("queries muss mindestens einen Begriff mit >= 2 Zeichen enthalten")
+      }
+      const chunkLimit = asLimit(args?.chunk_limit, 5, 20)
+      const factLimit = asLimit(args?.fact_limit, 6, 30)
+
+      const { data, error } = await authClient.rpc("search_kb_text_batch", {
+        p_kb_id: resolvedKbId,
+        p_queries: queries,
+        p_chunk_limit: chunkLimit,
+        p_fact_limit: factLimit
+      })
+      if (error) {
+        throw new Error(`Textsuche fehlgeschlagen: ${error.message}`)
+      }
+
+      const rpcResults = Array.isArray((data as any)?.results) ? (data as any).results : []
+      // Previews kompakt halten — die RPC liefert bis 400 Zeichen, fuer die
+      // LLM-History reichen kuerzere Ausschnitte (Volltext via get_chunk_details).
+      const results = rpcResults.map((r: any) => ({
+        query: String(r?.query ?? ""),
+        chunk_total: Number(r?.chunk_total ?? 0),
+        chunks: (Array.isArray(r?.chunks) ? r.chunks : []).map((c: any) => ({
+          chunk_id: c?.chunk_id,
+          content_preview: clip(String(c?.content_preview || ""), 200),
+          content_position: c?.content_position,
+          document_id: c?.document_id,
+          document_name: c?.document_name ?? null,
+          fact_count: Number(c?.fact_count ?? 0)
+        })),
+        fact_total: Number(r?.fact_total ?? 0),
+        facts: (Array.isArray(r?.facts) ? r.facts : []).map((f: any) => ({
+          fact_id: f?.fact_id,
+          content: clip(String(f?.content || ""), 200),
+          question: clip(String(f?.question || ""), 140),
+          fact_type: f?.fact_type ?? null,
+          source_name: f?.source_name ?? null,
+          source_chunk: f?.source_chunk ?? null
+        }))
+      }))
+
+      return {
+        result: { knowledge_base_id: resolvedKbId, queries, results }
       } as ToolExecutionResult
     }
 
@@ -2891,22 +2984,31 @@ async function executeTool(params: {
 
     case "get_chunk_details": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
-      const chunkId = asString(args?.chunk_id, "chunk_id")
-      const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
-
-      const { data: facts, error: factsError } = await authClient
-        .from("knowledge_items")
-        .select("id, content, question, fact_type, source_name, created_at")
-        .eq("source_chunk", chunkId)
-        .order("created_at", { ascending: false })
-        .limit(10)
-
-      if (factsError) {
-        throw new Error(`Fakten konnten nicht geladen werden: ${factsError.message}`)
+      // Batch-faehig: chunk_ids[] laedt mehrere Chunks parallel in EINEM
+      // Tool-Call (statt N sequenzieller Runden). chunk_id bleibt als
+      // Einzel-Variante mit unveraendertem Ergebnisformat erhalten.
+      const requestedIds: string[] = Array.isArray(args?.chunk_ids)
+        ? args.chunk_ids.map((x: any) => String(x ?? "").trim()).filter(Boolean)
+        : []
+      const singleId = asOptionalString(args?.chunk_id)
+      if (singleId) requestedIds.unshift(singleId)
+      const chunkIds = Array.from(new Set(requestedIds)).slice(0, 8)
+      if (chunkIds.length === 0) {
+        throw new Error("chunk_id oder chunk_ids ist erforderlich")
       }
 
-      return {
-        result: {
+      const loadOne = async (chunkId: string) => {
+        const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
+        const { data: facts, error: factsError } = await authClient
+          .from("knowledge_items")
+          .select("id, content, question, fact_type, source_name, created_at")
+          .eq("source_chunk", chunkId)
+          .order("created_at", { ascending: false })
+          .limit(10)
+        if (factsError) {
+          throw new Error(`Fakten konnten nicht geladen werden: ${factsError.message}`)
+        }
+        return {
           chunk: {
             id: chunk.id,
             position: chunk.content_position,
@@ -2927,6 +3029,25 @@ async function executeTool(params: {
             content: clip(String(fact.content || fact.question || ""), 220),
             created_at: fact.created_at
           }))
+        }
+      }
+
+      if (chunkIds.length === 1) {
+        return { result: await loadOne(chunkIds[0]) } as ToolExecutionResult
+      }
+
+      const settled = await Promise.allSettled(chunkIds.map(loadOne))
+      const chunks: any[] = []
+      const loadErrors: Array<{ chunk_id: string; error: string }> = []
+      settled.forEach((s, i) => {
+        if (s.status === "fulfilled") chunks.push(s.value)
+        else loadErrors.push({ chunk_id: chunkIds[i], error: s.reason?.message || "Chunk konnte nicht geladen werden." })
+      })
+      return {
+        result: {
+          count: chunks.length,
+          chunks,
+          ...(loadErrors.length > 0 ? { errors: loadErrors } : {})
         }
       } as ToolExecutionResult
     }
@@ -4701,7 +4822,13 @@ async function runAgentWorkflow(params: {
       tool_calls: resolvedToolCalls
     })
 
-    for (const toolCall of resolvedToolCalls) {
+    // SOTA-WDB-Speedup: Der Per-Tool-Body laeuft unveraendert, aber der
+    // Dispatcher darunter buendelt aufeinanderfolgende Read-only-Calls in
+    // Promise.all — 5 parallele Suchen kosten die Zeit der langsamsten statt
+    // der Summe. Conversation-Pushes bleiben valide (OpenAI verlangt nur
+    // EINE tool-Message pro tool_call_id, keine Reihenfolge); Kontext-
+    // Mutationen passieren nur in seriellen Schreib-Tools.
+    const runOneToolCall = async (toolCall: (typeof resolvedToolCalls)[number]) => {
       const toolName = toolCall.function?.name || "unknown"
       const args = parseArgs(toolCall.function?.arguments)
       const label = buildToolLabel(toolName, args)
@@ -4867,6 +4994,27 @@ async function runAgentWorkflow(params: {
           toolInput: args,
           toolOutput: { error: errorMessage }
         })
+      }
+    }
+
+    // ── Dispatcher: Read-Gruppen parallel, Schreib-Tools seriell ─────────
+    let dispatchCursor = 0
+    while (dispatchCursor < resolvedToolCalls.length) {
+      const isParallelSafe = (tc: (typeof resolvedToolCalls)[number]) =>
+        PARALLEL_SAFE_TOOLS.has(tc.function?.name || "")
+      if (isParallelSafe(resolvedToolCalls[dispatchCursor])) {
+        const group: typeof resolvedToolCalls = []
+        while (
+          dispatchCursor < resolvedToolCalls.length &&
+          isParallelSafe(resolvedToolCalls[dispatchCursor])
+        ) {
+          group.push(resolvedToolCalls[dispatchCursor])
+          dispatchCursor++
+        }
+        await Promise.all(group.map(runOneToolCall))
+      } else {
+        await runOneToolCall(resolvedToolCalls[dispatchCursor])
+        dispatchCursor++
       }
     }
   }
