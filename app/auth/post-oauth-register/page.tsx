@@ -14,7 +14,7 @@ export default function PostOAuthRegister() {
     const run = async () => {
       try {
         const companyId = searchParams.get("companyId")
-        const companyName = searchParams.get("companyName")
+        const registrationToken = searchParams.get("registrationToken")
 
         const { data: sessionData } = await supabase.auth.getSession()
         const user = sessionData.session?.user
@@ -24,18 +24,25 @@ export default function PostOAuthRegister() {
           return
         }
 
-        // Profil für OAuth wird direkt bei der Registrierung über create-profile-direct erstellt
-        // (OAuth flow kommt erst nach der Registrierung)
-
         if (companyId) {
-          try {
-            // Admin-Zuweisung via API-Route
-            await fetch("/api/register-admin", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userId: user.id, companyId })
+          // Admin-Zuweisung + Profil via API-Route (autorisiert über den
+          // Registrierungs-Token aus dem Firmen-Anlage-Schritt)
+          const res = await fetch("/api/register-admin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              companyId,
+              registrationToken,
+              email: user.email,
+              fullName: user.user_metadata?.full_name || user.user_metadata?.name || null
             })
-          } catch {}
+          })
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}))
+            setError(`Fehler bei der Zuweisung der Admin-Rolle: ${d.error || res.statusText}`)
+            return
+          }
         }
 
         // MFA: Falls TOTP-Faktor aktiv ist, leite zur MFA-Seite

@@ -1,164 +1,276 @@
-"use client"
+"use client";
 
-import { useEffect, useRef } from 'react'
-
-interface Star {
-  x: number
-  y: number
-  z: number
-  size: number
-  prevX?: number
-  prevY?: number
-}
+import React, { useEffect, useRef } from "react";
+import { cn } from "@/lib/utils";
 
 interface HyperspeedBackgroundProps {
-  color?: string
-  particleCount?: number
-  speed?: number
+  className?: string;
+  color?: string;
+  particleCount?: number;
+  speed?: number;
+  /** Statt fullscreen-fixed im Eltern-Element (position:absolute) laufen. */
+  contained?: boolean;
+  /** Trail-Fade-Farbe — sollte zur Hintergrundfarbe des Containers passen. */
+  fadeColor?: string;
 }
 
-export function HyperspeedBackground({ 
-  color = "#ff55c9", 
-  particleCount = 80, 
-  speed = 2 
-}: HyperspeedBackgroundProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const starsRef = useRef<Star[]>([])
-  const animationFrameRef = useRef<number>()
+interface Particle {
+  x: number;
+  y: number;
+  z: number;
+  prevX?: number;
+  prevY?: number;
+  isGolden?: boolean;
+  x2d?: number;
+  y2d?: number;
+  radius?: number;
+}
+
+export const HyperspeedBackground: React.FC<HyperspeedBackgroundProps> = ({
+  className = "",
+  color = "#ffffff",
+  particleCount = 100,
+  speed = 1,
+  contained = false,
+  fadeColor = "rgba(30, 30, 30, 0.4)",
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const particles = useRef<Particle[]>([]);
+  const rafID = useRef<number | null>(null);
+  const [caughtCount, setCaughtCount] = React.useState(0);
+  const [hasWon, setHasWon] = React.useState(false);
+  const [isSwipingOut, setIsSwipingOut] = React.useState(false);
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     // Set canvas size
     const resizeCanvas = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-    }
-    resizeCanvas()
-    window.addEventListener('resize', resizeCanvas)
-
-    // Initialize stars
-    const stars: Star[] = []
-    
-    for (let i = 0; i < particleCount; i++) {
-      stars.push({
-        x: Math.random() * canvas.width - canvas.width / 2,
-        y: Math.random() * canvas.height - canvas.height / 2,
-        z: Math.random() * canvas.width,
-        size: Math.random() * 1.5
-      })
-    }
-    starsRef.current = stars
-
-    // Helper function to parse hex color to RGB
-    const hexToRgb = (hex: string) => {
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-      return result ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16)
-      } : { r: 255, g: 85, b: 201 }
+      if (contained && canvas.parentElement) {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+      } else {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+    };
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+    let resizeObserver: ResizeObserver | null = null;
+    if (contained && canvas.parentElement) {
+      resizeObserver = new ResizeObserver(resizeCanvas);
+      resizeObserver.observe(canvas.parentElement);
     }
 
-    const rgb = hexToRgb(color)
+    // Initialize particles
+    const initParticles = () => {
+      particles.current = [];
+      for (let i = 0; i < particleCount; i++) {
+        particles.current.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          z: Math.random() * canvas.width,
+          isGolden: Math.random() < 0.01, // 1% chance for golden particle
+        });
+      }
+    };
+    initParticles();
 
-    // Animation
+    // Animation loop
     const animate = () => {
-      ctx.fillStyle = 'rgba(30, 30, 30, 0.2)'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      if (!ctx || !canvas) return;
 
-      const centerX = canvas.width / 2
-      const centerY = canvas.height / 2
+      // Semi-transparent fill to create trail effect
+      ctx.fillStyle = fadeColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      stars.forEach(star => {
-        // Save previous position
-        star.prevX = star.x / star.z * canvas.width + centerX
-        star.prevY = star.y / star.z * canvas.height + centerY
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
 
-        // Move star closer
-        star.z -= speed
+      particles.current.forEach((particle) => {
+        // Store previous position
+        particle.prevX = particle.x;
+        particle.prevY = particle.y;
+
+        // Calculate position based on z (depth)
+        const scale = canvas.width / particle.z;
+        const x2d = (particle.x - centerX) * scale + centerX;
+        const y2d = (particle.y - centerY) * scale + centerY;
         
-        // Reset star if it goes past the screen
-        if (star.z <= 0) {
-          star.z = canvas.width
-          star.x = Math.random() * canvas.width - canvas.width / 2
-          star.y = Math.random() * canvas.height - canvas.height / 2
-          star.prevX = undefined
-          star.prevY = undefined
+        // Store position and radius for click detection
+        const radius = scale * 1.5;
+        particle.x2d = x2d;
+        particle.y2d = y2d;
+        particle.radius = radius;
+
+        // Move particle towards viewer (decrease z)
+        particle.z -= speed * 2;
+
+        // Reset particle when it gets too close
+        if (particle.z < 1) {
+          particle.x = Math.random() * canvas.width;
+          particle.y = Math.random() * canvas.height;
+          particle.z = canvas.width;
+          particle.prevX = undefined;
+          particle.prevY = undefined;
+          particle.isGolden = Math.random() < 0.01; // Re-roll golden chance
         }
 
-        // Calculate screen position
-        const screenX = star.x / star.z * canvas.width + centerX
-        const screenY = star.y / star.z * canvas.height + centerY
-        
-        // Calculate star size based on depth
-        const starSize = (1 - star.z / canvas.width) * star.size * 2
+        // Choose color based on whether particle is golden
+        const particleColor = particle.isGolden ? "#FFD700" : color;
 
-        // Draw star trail (hyperspeed effect)
-        if (star.prevX !== undefined && star.prevY !== undefined) {
-          const gradient = ctx.createLinearGradient(
-            star.prevX, 
-            star.prevY, 
-            screenX, 
-            screenY
-          )
-          
-          // Use the provided color for gradient
-          gradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`)
-          gradient.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`)
-          gradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.8)`)
-          
-          ctx.strokeStyle = gradient
-          ctx.lineWidth = starSize
-          ctx.lineCap = 'round'
-          ctx.beginPath()
-          ctx.moveTo(star.prevX, star.prevY)
-          ctx.lineTo(screenX, screenY)
-          ctx.stroke()
+        // Draw particle trail
+        if (particle.prevX !== undefined && particle.prevY !== undefined) {
+          const prevScale = canvas.width / (particle.z + speed * 2);
+          const prevX = (particle.x - centerX) * prevScale + centerX;
+          const prevY = (particle.y - centerY) * prevScale + centerY;
+
+          ctx.beginPath();
+          ctx.moveTo(prevX, prevY);
+          ctx.lineTo(x2d, y2d);
+
+          // Opacity based on depth
+          const opacity = 1 - particle.z / canvas.width;
+          ctx.strokeStyle = `${particleColor}${Math.floor(opacity * 255).toString(16).padStart(2, "0")}`;
+          ctx.lineWidth = scale * 1.5;
+          ctx.stroke();
         }
 
-        // Draw star point
-        const starGradient = ctx.createRadialGradient(
-          screenX, 
-          screenY, 
-          0, 
-          screenX, 
-          screenY, 
-          starSize
-        )
-        starGradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`)
-        starGradient.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.6)`)
-        starGradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`)
+        // Draw particle dot
+        ctx.beginPath();
+        ctx.arc(x2d, y2d, radius * 0.7, 0, Math.PI * 2);
+        const opacity = 1 - particle.z / canvas.width;
+        ctx.fillStyle = `${particleColor}${Math.floor(opacity * 255).toString(16).padStart(2, "0")}`;
+        ctx.fill();
         
-        ctx.fillStyle = starGradient
-        ctx.beginPath()
-        ctx.arc(screenX, screenY, starSize, 0, Math.PI * 2)
-        ctx.fill()
-      })
+        // Add glow effect for golden particles
+        if (particle.isGolden) {
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = "#FFD700";
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      });
 
-      animationFrameRef.current = requestAnimationFrame(animate)
-    }
+      rafID.current = requestAnimationFrame(animate);
+    };
 
-    animate()
+    animate();
+
+    // Click handler for golden particles
+    const handleClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Check if click hit any golden particle
+      for (const particle of particles.current) {
+        if (!particle.isGolden) continue;
+        if (
+          particle.x2d !== undefined &&
+          particle.y2d !== undefined &&
+          particle.radius !== undefined
+        ) {
+          const dx = clickX - particle.x2d;
+          const dy = clickY - particle.y2d;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Larger click radius for golden particles (3x the visual size)
+          if (distance <= particle.radius * 3) {
+            // Hit! Increment counter
+            setCaughtCount((prev) => {
+              const newCount = prev + 1;
+              if (newCount >= 5) {
+                setHasWon(true);
+                // Nach 6 Sekunden mit Swipe-Animation verschwinden
+                setTimeout(() => {
+                  setIsSwipingOut(true);
+                  // Nach Animation zurücksetzen
+                  setTimeout(() => {
+                    setCaughtCount(0);
+                    setHasWon(false);
+                    setIsSwipingOut(false);
+                  }, 500); // Animation duration
+                }, 6000);
+              }
+              return newCount;
+            });
+            
+            // Reset the golden particle
+            particle.isGolden = false;
+            break;
+          }
+        }
+      }
+    };
+
+    canvas.addEventListener("click", handleClick);
 
     return () => {
-      window.removeEventListener('resize', resizeCanvas)
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
+      window.removeEventListener("resize", resizeCanvas);
+      resizeObserver?.disconnect();
+      canvas.removeEventListener("click", handleClick);
+      if (rafID.current) {
+        cancelAnimationFrame(rafID.current);
       }
-    }
-  }, [color, particleCount, speed])
+    };
+  }, [color, particleCount, speed, contained, fadeColor]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 w-full h-full pointer-events-none"
-      style={{ zIndex: 0 }}
-    />
-  )
-}
+    <>
+      <canvas
+        ref={canvasRef}
+        className={cn(
+          contained ? "absolute inset-0" : "fixed inset-0",
+          className
+        )}
+        style={{
+          zIndex: 0,
+          cursor: "pointer",
+          pointerEvents: "auto"
+        }}
+      />
+      
+      {/* Schlichter Counter rechts oben */}
+      {caughtCount > 0 && (
+        <div
+          className={cn(
+            contained ? "absolute" : "fixed",
+            "top-4 right-4 z-50 pointer-events-none transition-all duration-500"
+          )}
+          style={{
+            transform: isSwipingOut ? 'translateX(200px)' : 'translateX(0)',
+            opacity: isSwipingOut ? 0 : 1
+          }}
+        >
+          <div 
+            className="text-white text-sm font-bold"
+            style={{
+              fontFamily: 'Courier New, monospace'
+            }}
+          >
+            {hasWon ? 'genug gespielt!' : `${caughtCount}/5`}
+          </div>
+        </div>
+      )}
+      
+      <style jsx>{`
+        @keyframes swipeOut {
+          from {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateX(200px);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </>
+  );
+};
 
