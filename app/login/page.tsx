@@ -505,12 +505,19 @@ export default function Login() {
     try {
       setError(null)
       setSuccess(null)
+      // Login (nicht Registrierung): NIEMALS companyId/registrationToken anhängen.
+      // Sonst würde post-oauth-register die Admin-Registrierung auslösen, die ohne
+      // gültigen Registrierungs-Token 403t — genau der Grund, warum sich bestehende
+      // User bisher nicht per Microsoft anmelden konnten. Die Firmenzuordnung kommt
+      // beim Login ausschließlich aus dem Profil des Users.
+      const base = `${window.location.origin}/auth/post-oauth-register`
+      const redirectTo = returnUrl
+        ? `${base}?returnUrl=${encodeURIComponent(returnUrl)}`
+        : base
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
-          redirectTo: company
-            ? `${window.location.origin}/auth/post-oauth-register?companyId=${encodeURIComponent(company.id)}&companyName=${encodeURIComponent(company.name)}`
-            : `${window.location.origin}/auth/post-oauth-register`,
+          redirectTo,
           scopes: "openid profile email offline_access"
         }
       })

@@ -15,6 +15,12 @@ export default function PostOAuthRegister() {
       try {
         const companyId = searchParams.get("companyId")
         const registrationToken = searchParams.get("registrationToken")
+        // Open-Redirect-Schutz: nur relative Pfade auf gleicher Origin zulassen.
+        const rawReturnUrl = searchParams.get("returnUrl")
+        const returnUrl =
+          rawReturnUrl && rawReturnUrl.startsWith("/") && !rawReturnUrl.startsWith("//")
+            ? rawReturnUrl
+            : null
 
         const { data: sessionData } = await supabase.auth.getSession()
         const user = sessionData.session?.user
@@ -24,7 +30,12 @@ export default function PostOAuthRegister() {
           return
         }
 
-        if (companyId) {
+        // Admin-Registrierung NUR bei echtem Registrierungs-Token (Firmen-Anlage-
+        // Schritt). Ohne Token ist das ein normaler OAuth-Login eines bestehenden
+        // Users — dann niemals register-admin aufrufen (das würde ohne Token 403en
+        // und außerdem einen Cross-Tenant-Self-Join über eine geratene companyId
+        // ermöglichen).
+        if (companyId && registrationToken) {
           // Admin-Zuweisung + Profil via API-Route (autorisiert über den
           // Registrierungs-Token aus dem Firmen-Anlage-Schritt)
           const res = await fetch("/api/register-admin", {
@@ -53,13 +64,16 @@ export default function PostOAuthRegister() {
             const factors = (factorsData?.factors || factorsData?.all || []) as any[]
             const hasTotp = factors?.some((f: any) => (f?.factor_type || f?.factorType) === 'totp')
             if (hasTotp) {
-              router.replace('/auth/mfa')
+              const mfaUrl = returnUrl
+                ? `/auth/mfa?returnUrl=${encodeURIComponent(returnUrl)}`
+                : '/auth/mfa'
+              router.replace(mfaUrl)
               return
             }
           }
         } catch {}
 
-        router.replace("/dashboard")
+        router.replace(returnUrl || "/dashboard")
       } catch (e: any) {
         setError(e?.message || "Unerwarteter Fehler nach OAuth-Registrierung.")
       }
