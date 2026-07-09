@@ -62,7 +62,12 @@ export default function PostOAuthRegister() {
           if (anySupabase?.auth?.mfa?.listFactors) {
             const { data: factorsData } = await anySupabase.auth.mfa.listFactors()
             const factors = (factorsData?.factors || factorsData?.all || []) as any[]
-            const hasTotp = factors?.some((f: any) => (f?.factor_type || f?.factorType) === 'totp')
+            // Nur VERIFIZIERTE TOTP-Faktoren zählen — sonst schickt ein hängender,
+            // unverifizierter Faktor den User auf /auth/mfa, das ihn sofort wieder
+            // wegleitet (verwirrender Doppel-Redirect, wirkt wie "2FA spinnt").
+            const hasTotp = factors?.some(
+              (f: any) => (f?.factor_type || f?.factorType) === 'totp' && f?.status === 'verified'
+            )
             if (hasTotp) {
               const mfaUrl = returnUrl
                 ? `/auth/mfa?returnUrl=${encodeURIComponent(returnUrl)}`

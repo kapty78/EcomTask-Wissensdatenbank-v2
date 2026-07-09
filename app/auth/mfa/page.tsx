@@ -142,6 +142,20 @@ export default function MfaPage() {
       })
 
       if (verifyError) {
+        const msg = (verifyError.message || "").toLowerCase()
+        // Häufigste Reliability-Ursache ("2FA greift manchmal nicht"): Die Challenge
+        // hat eine kurze TTL. Ist sie abgelaufen, sofort eine frische anfordern, damit
+        // der nächste Code funktioniert — statt den User in einer toten Challenge zu lassen.
+        if (msg.includes("expired") || msg.includes("challenge") || msg.includes("invalid")) {
+          try {
+            const { data: fresh } = await anySupabase.auth.mfa.challenge({ factorId })
+            const newCid = (fresh?.id || fresh?.challenge_id) as string
+            if (newCid) setChallengeId(newCid)
+          } catch {}
+          setOtp("")
+          setError("Der Code war abgelaufen. Bitte gib den aktuellen 6-stelligen Code erneut ein.")
+          return
+        }
         setError(verifyError.message || "Code ungültig. Bitte erneut versuchen.")
         return
       }
