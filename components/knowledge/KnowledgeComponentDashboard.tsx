@@ -32,7 +32,7 @@ const KnowledgeGraphView = dynamic(
 )
 
 import { CreateKnowledgeBaseModal } from "@/components/knowledge/CreateKnowledgeBaseModal"
-import { getSavedCompany } from "@/lib/domain-manager"
+import { getSavedCompany, resolveUserCompany } from "@/lib/domain-manager"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import {
   Database as DatabaseIcon,
@@ -3073,8 +3073,9 @@ export default function KnowledgeComponentDashboard() {
         setUser(authUser)
         setIsAdmin(true) // Placeholder: Assume admin for now
 
-        // Get company name from saved company info
-        const company = getSavedCompany()
+        // Echte Firma aus dem Profil bevorzugen; localStorage nur als Fallback
+        // für Super-Admins ohne eigene Firmenzuordnung.
+        const company = (await resolveUserCompany(supabase)) ?? getSavedCompany()
         if (company && company.name) {
           setCompanyName(company.name)
         }

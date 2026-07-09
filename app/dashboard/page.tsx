@@ -2,7 +2,7 @@
 
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { useEffect, useState, useRef } from "react"
-import { getSavedDomain, getSavedCompany } from "@/lib/domain-manager"
+import { clearCompanyData, resolveUserCompany } from "@/lib/domain-manager"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
   const [canUpload, setCanUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'knowledge' | 'admin'>('knowledge')
+  // Echte Firma des eingeloggten Benutzers (aus profiles.company_id, nicht localStorage)
+  const [companyName, setCompanyName] = useState<string | null>(null)
   
   // State für das Einladungs-Dropdown
   const [showInviteDropdown, setShowInviteDropdown] = useState(false)
@@ -98,40 +100,39 @@ export default function Dashboard() {
 
         setUser(session.user)
         
-        // Benutzerprofil mit company_id laden
+        // Benutzerprofil mit company_id laden (enthält auch is_super_admin/can_upload)
         try {
           const { data: profileData, error: profileError } = await supabase
             .from("profiles")
             .select("*") // Alle Profilfelder inkl. company_id
             .eq("id", session.user.id)
             .single()
-            
+
           if (profileError) {
             // Fehler beim Laden des Benutzerprofils
           } else if (profileData) {
             setUserProfile(profileData)
+            setIsSuperAdmin(profileData.is_super_admin || false)
+            setCanUpload(profileData.can_upload || false)
+
+            // Set default tab to admin for super admins
+            if (profileData.is_super_admin) {
+              setActiveTab('admin')
+            }
           }
         } catch (profileErr) {
           // Unerwarteter Fehler beim Laden des Profils
         }
-        
-        // Check if user is super admin
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('is_super_admin, can_upload')
-          .eq('id', session.user.id)
-          .single();
-        
-        setIsSuperAdmin(profile?.is_super_admin || false);
-        setCanUpload(profile?.can_upload || false);
-        
-        // Set default tab to admin for super admins
-        if (profile?.is_super_admin) {
-          setActiveTab('admin');
+
+        // Echte Firma des Benutzers auflösen (profiles.company_id) — NICHT den
+        // zuletzt im Login getippten localStorage-Wert anzeigen. Heilt zugleich
+        // veraltete localStorage-Einträge.
+        const company = await resolveUserCompany(supabase)
+        if (company) {
+          setCompanyName(company.name)
         }
-        
-        // Prüfen ob der Benutzer ein Admin ist
-        const company = getSavedCompany()
+
+        // Prüfen ob der Benutzer ein Admin seiner Firma ist
         if (company && company.id) {
           try {
             // Option 1: Versuchen über RLS
@@ -178,8 +179,10 @@ export default function Dashboard() {
   
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    localStorage.removeItem("selectedDomain")
-    localStorage.removeItem("selectedCompany")
+    // Korrekte Keys löschen (ecomtask_domain/ecomtask_company) — die früheren
+    // Keys "selectedDomain"/"selectedCompany" existierten nie, dadurch überlebte
+    // die Firmen-Auswahl jeden Logout.
+    clearCompanyData()
     router.push("/login")
   }
   
@@ -383,9 +386,9 @@ export default function Dashboard() {
                     )}
                     <span
                       className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate max-w-[80px] sm:max-w-[100px] md:max-w-[160px] lg:max-w-[200px]"
-                      title={getSavedCompany()?.name ?? user?.email ?? undefined}
+                      title={companyName ?? userProfile?.full_name ?? user?.email ?? undefined}
                     >
-                      {getSavedCompany()?.name ??
+                      {companyName ??
                         userProfile?.full_name ??
                         (user as any)?.user_metadata?.full_name ??
                         user?.email ??
