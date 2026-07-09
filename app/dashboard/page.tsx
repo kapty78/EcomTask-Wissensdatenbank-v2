@@ -337,28 +337,28 @@ export default function Dashboard() {
             {/* Professioneller Header mit mehr Inhalt */}
             <div className="mx-auto max-w-7xl w-full mb-2 sm:mb-3 md:mb-4 mt-1.5 sm:mt-2 md:mt-3 px-1.5 sm:px-3 md:px-4 lg:px-8 flex-shrink-0">
               <div className="w-full border border-white/10 bg-[#1e1e1e] rounded-lg md:rounded-xl">
-                {/* Top Bar mit Logo und User */}
-                <div className="flex items-center justify-between gap-2 py-1.5 sm:py-2 md:py-1 px-2 sm:px-3 md:px-4 min-w-0">
+                {/* Top Bar mit Logo und User — links/rechts symmetrisch (flex-1 basis-0), damit der Chat exakt mittig sitzt */}
+                <div className="flex items-center justify-between gap-2 py-2 sm:py-2.5 md:py-3 px-2 sm:px-3 md:px-4 lg:px-5 min-w-0">
                   {/* Logo */}
-                  <div className="flex items-center flex-shrink-0">
+                  <div className="flex items-center md:flex-1 md:basis-0 min-w-0">
                     <button
                       onClick={() => setActiveTab('knowledge')}
-                      className="hover:opacity-80 transition-opacity mt-[1mm]"
+                      className="flex items-center gap-2 sm:gap-2.5 hover:opacity-80 transition-opacity"
                       title="Zur Wissensdatenbank"
                     >
-                      <Image
-                        src="/EcomTask.svg"
-                        alt="EcomTask Logo"
-                        width={180}
-                        height={68}
-                        className="w-[130px] h-auto sm:w-[150px] md:w-[150px] lg:w-[180px] -ml-1 sm:-ml-2 md:-ml-3"
-                        priority
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/wissensdatenbank-logo-v2.png"
+                        alt=""
+                        aria-hidden
+                        className="h-7 w-7 sm:h-8 sm:w-8 md:h-9 md:w-9 select-none"
+                        draggable={false}
                       />
                     </button>
                   </div>
 
                   {/* Agent Launcher - visible from md breakpoint */}
-                  <div className="hidden md:flex flex-1 justify-center items-center px-2">
+                  <div className="hidden md:flex shrink-0 justify-center items-center px-2">
                     <div className="w-[min(560px,50vw)] min-w-[200px]">
                       <KnowledgeAgentLauncher
                         userName={
@@ -370,7 +370,7 @@ export default function Dashboard() {
                   </div>
 
                   {/* Benutzer-Profil */}
-                  <div className="flex items-center justify-end gap-1 sm:gap-1.5 md:gap-2 flex-shrink-0 min-w-0">
+                  <div className="flex items-center justify-end gap-1 sm:gap-1.5 md:gap-2 md:flex-1 md:basis-0 min-w-0">
                     {isSuperAdmin && (
                       <button
                         onClick={() => setActiveTab('admin')}

@@ -2040,12 +2040,12 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
         </button>
       )}
 
-      {variant === "inline" && <div ref={triggerRef} className="h-9 w-full">
+      {variant === "inline" && <div ref={triggerRef} className="h-9 md:h-10 w-full">
         {!isRendered ? (
           <>
           <form
             onSubmit={handleSubmit}
-            className="agent-input-glow relative flex h-9 w-full items-center gap-2 rounded-xl border border-white/[0.08] bg-[#1a1a1a] px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="agent-input-glow relative flex h-9 md:h-10 w-full items-center gap-2 rounded-xl border border-white/[0.08] bg-[#1a1a1a] px-2 md:px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
             onMouseDown={() => {
               if (!isRendered) {
                 openChat()
@@ -2129,7 +2129,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
               <ArrowDown className="size-4" />
             </button>
             {isKbPickerOpen && knowledgeBaseOptions.length > 0 && (
-              <div className="absolute left-2 top-8 z-20 w-[300px] overflow-hidden rounded-md border border-white/10 bg-background shadow-xl">
+              <div className="absolute left-2 top-full mt-1 z-20 w-[300px] overflow-hidden rounded-md border border-white/10 bg-background shadow-xl">
                 <div className="max-h-64 overflow-y-auto p-1">
                   {knowledgeBaseOptions.map(option => {
                     const isActive = option.id === knowledgeBaseId
@@ -2157,7 +2157,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
           </form>
           </>
         ) : (
-          <div className="h-9 w-full rounded-lg border border-transparent" aria-hidden="true" />
+          <div className="h-9 md:h-10 w-full rounded-lg border border-transparent" aria-hidden="true" />
         )}
       </div>}
 
@@ -2182,7 +2182,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
             >
               {!isMobileChat && <form
                 onSubmit={handleSubmit}
-                className="agent-input-glow relative z-[2] flex h-9 w-full items-center gap-2 rounded-xl border border-white/[0.1] bg-[#1a1a1a] px-2 text-xs text-foreground shadow-lg shadow-black/30"
+                className="agent-input-glow relative z-[2] flex h-9 md:h-10 w-full items-center gap-2 rounded-xl border border-white/[0.1] bg-[#1a1a1a] px-2 md:px-2.5 text-xs text-foreground shadow-lg shadow-black/30"
               >
                 <button
                   type="button"
@@ -2255,7 +2255,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
                   {isUploading ? <Loader2 className="size-4 animate-spin" /> : <ArrowDown className="size-4" />}
                 </button>
                 {isKbPickerOpen && knowledgeBaseOptions.length > 0 && (
-                  <div className="absolute left-2 top-8 z-20 w-[300px] overflow-hidden rounded-md border border-white/10 bg-background shadow-xl">
+                  <div className="absolute left-2 top-full mt-1 z-20 w-[300px] overflow-hidden rounded-md border border-white/10 bg-background shadow-xl">
                     <div className="max-h-64 overflow-y-auto p-1">
                       {knowledgeBaseOptions.map(option => {
                         const isActive = option.id === knowledgeBaseId
