@@ -181,10 +181,10 @@ export async function POST(req: NextRequest) {
       console.log(`⚠️ ${invalidFiles.length} invalid files skipped, continuing with ${validFiles.length} valid files`)
     }
 
-    console.log(`✅ Validation complete: ${filesToProcess.length}/${files.length} files will be processed`)
-
     // Use valid files instead of all files
     const filesToProcess = validFiles
+
+    console.log(`✅ Validation complete: ${filesToProcess.length}/${files.length} files will be processed`)
 
     console.log(`Folder: ${folderName}, Files: ${filesToProcess.length}/${files.length}, Workspace: ${workspaceId}, Knowledge Base: ${knowledgeBaseId}`)
 
@@ -235,13 +235,10 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Process each file and collect document IDs for n8n processing
-    const results = [];
-    const errors = [];
-    const documentsForProcessing = [];
+    // Process each file in PARALLEL and collect document IDs for n8n processing
+    console.log(`⚡ Starting PARALLEL processing for ${filesToProcess.length} files`);
 
-    for (let i = 0; i < filesToProcess.length; i++) {
-      const file = filesToProcess[i];
+    const processingPromises = filesToProcess.map(async (file, i) => {
       console.log(`Processing file ${i + 1}/${filesToProcess.length}: ${file.name}`);
 
       try {
@@ -257,44 +254,66 @@ export async function POST(req: NextRequest) {
 
         console.log(`✅ Document uploaded successfully: ${file.name} -> ${documentId}`);
 
-        // Add to results and processing queue
-        results.push({
-          file_name: file.name,
-          document_id: documentId,
-          size: file.size,
-          type: file.type,
-          status: 'uploaded'
-        });
-
-        documentsForProcessing.push({
-          documentId,
-          fileName: file.name
-        });
+        return {
+          success: true,
+          result: {
+            file_name: file.name,
+            document_id: documentId,
+            size: file.size,
+            type: file.type,
+            status: 'uploaded'
+          },
+          document: {
+            documentId,
+            fileName: file.name
+          }
+        };
 
       } catch (error: any) {
         console.error(`❌ Error processing file ${file.name}:`, error);
-        errors.push({
-          file_name: file.name,
-          error: error.message || 'Processing failed'
-        });
+        return {
+          success: false,
+          error: {
+            file_name: file.name,
+            error: error.message || 'Processing failed'
+          }
+        };
       }
-    }
+    });
 
-    // Wait for chunks to be created and delegate to n8n for each document
-    console.log(`📊 Starting n8n delegation for ${documentsForProcessing.length} documents`);
-    
-    for (const doc of documentsForProcessing) {
-      try {
-        await processFolderDocumentWithN8n(supabaseAdmin, doc.documentId, doc.fileName, knowledgeBaseId, workspaceId, user.id);
-      } catch (error: any) {
-        console.error(`❌ Error delegating ${doc.fileName} to n8n:`, error);
-        // Update the result status but don't fail the entire folder upload
-        const resultIndex = results.findIndex(r => r.document_id === doc.documentId);
-        if (resultIndex >= 0) {
-          results[resultIndex].status = 'processing_failed';
-        }
+    const processingResults = await Promise.all(processingPromises);
+
+    const results: any[] = [];
+    const errors: any[] = [];
+    const documentsForProcessing: any[] = [];
+
+    processingResults.forEach(result => {
+      if (result.success) {
+        results.push(result.result);
+        documentsForProcessing.push(result.document);
+      } else {
+        errors.push(result.error);
       }
-    }
+    });
+
+    // Delegate to n8n for each document in PARALLEL (don't wait for completion)
+    console.log(`📊 Starting PARALLEL n8n delegation for ${documentsForProcessing.length} documents`);
+
+    const n8nPromises = documentsForProcessing.map(doc =>
+      processFolderDocumentWithN8n(supabaseAdmin, doc.documentId, doc.fileName, knowledgeBaseId, workspaceId, user.id)
+        .catch((error: any) => {
+          console.error(`❌ Error delegating ${doc.fileName} to n8n:`, error);
+          const resultIndex = results.findIndex(r => r.document_id === doc.documentId);
+          if (resultIndex >= 0) {
+            results[resultIndex].status = 'processing_failed';
+          }
+        })
+    );
+
+    // Fire and forget - don't await completion, just start processing
+    Promise.all(n8nPromises).catch(err => {
+      console.error('Non-fatal error in n8n delegation batch:', err);
+    });
 
     // Check if we have any successful uploads
     if (results.length === 0) {
@@ -346,6 +365,23 @@ async function processFolderDocumentWithN8n(
 ) {
   console.log(`📋 Processing document ${fileName} (${documentId}) with n8n...`);
 
+  // Update processing status helper
+  const updateStatus = async (status: string, progress: number, message: string) => {
+    try {
+      await supabaseAdmin
+        .from('document_processing_status')
+        .upsert({
+          document_id: documentId,
+          status: status as any,
+          progress,
+          message,
+          updated_at: new Date().toISOString()
+        });
+    } catch (error) {
+      console.error(`Error updating status for ${fileName}:`, error);
+    }
+  };
+
   // Function to check if chunk creation is complete
   const waitForChunkCreationCompletion = async (): Promise<boolean> => {
     const { data: statusData, error: statusError } = await supabaseAdmin
@@ -374,11 +410,11 @@ async function processFolderDocumentWithN8n(
     return false;
   };
 
-  // Wait for chunk creation (shorter window for folder uploads)
+  // Wait for chunk creation (aggressive timeout for folder uploads - max 2s total)
   let chunksCreated = false;
   let attempts = 0;
-  const maxAttempts = 3; // ~6 seconds (3 * 2s) for folder uploads
-  const intervalMs = 2000;
+  const maxAttempts = 2; // ~2 seconds (2 * 1s) for folder uploads - MUCH faster
+  const intervalMs = 1000;
 
   console.log(`⏳ Waiting for chunks to be created for ${fileName} (${documentId})...`);
   while (attempts < maxAttempts && !chunksCreated) {
@@ -387,13 +423,15 @@ async function processFolderDocumentWithN8n(
       console.log(`✅ Chunks created for ${fileName} (${documentId})`);
       break;
     }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    if (attempts < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
     attempts++;
   }
 
   if (!chunksCreated) {
-    console.warn(`[WARN] Timeout while waiting for chunks for ${fileName}. Skipping n8n delegation.`);
-    return;
+    console.warn(`[WARN] Timeout waiting for chunks for ${fileName} (${attempts} attempts). Delegating to n8n anyway.`);
+    // Continue anyway - n8n will handle chunks when they appear
   }
 
   // Load the created chunks from database
@@ -403,34 +441,25 @@ async function processFolderDocumentWithN8n(
     .eq('document_id', documentId)
     .order('content_position', { ascending: true });
 
-  if (chunksError || !chunks || chunks.length === 0) {
+  if (chunksError) {
+    console.error(`Error loading chunks for ${fileName}: ${chunksError.message}`);
+    await updateStatus('processing', 65, `Fehler beim Laden der Chunks: ${chunksError.message}`);
     throw new Error(`Failed to load chunks for document ${fileName} (${documentId}).`);
   }
 
-  console.log(`📊 Found ${chunks.length} chunks for ${fileName}. Delegating to n8n webhook`);
-
-  // Update processing status
-  const updateStatus = async (status: string, progress: number, message: string) => {
-    try {
-      await supabaseAdmin
-        .from('document_processing_status')
-        .upsert({
-          document_id: documentId,
-          status: status as any,
-          progress,
-          message,
-          updated_at: new Date().toISOString()
-        });
-    } catch (error) {
-      console.error(`Error updating status for ${fileName}:`, error);
-    }
-  };
+  // If no chunks yet, continue anyway - n8n will retry
+  if (!chunks || chunks.length === 0) {
+    console.warn(`[WARN] No chunks found yet for ${fileName} (${documentId}). Will delegate to n8n to handle.`);
+  } else {
+    console.log(`📊 Found ${chunks.length} chunks for ${fileName}. Delegating to n8n webhook`);
+  }
 
   // Delegate to n8n webhook
   const webhookUrl = process.env.N8N_WEBHOOK_URL || process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
   if (webhookUrl) {
     try {
-      await updateStatus('processing', 70, `${chunks.length} Chunks erstellt. Wird vom Server analysiert...`);
+      const chunkCount = chunks?.length || 0;
+      await updateStatus('processing', 70, `${chunkCount} Chunks erstellt. Wird vom Server analysiert...`);
       
       // Load additional document details
       const { data: docDetails } = await supabaseAdmin
@@ -451,8 +480,8 @@ async function processFolderDocumentWithN8n(
           knowledge_base_id: knowledgeBaseId,
           user_id: userId
         },
-        chunks: chunks.map(c => ({ 
-          id: c.id, 
+        chunks: (chunks || []).map(c => ({
+          id: c.id,
           position: c.content_position
         })),
         options: {
@@ -477,7 +506,7 @@ async function processFolderDocumentWithN8n(
           await updateStatus('failed', 0, `Server-Verarbeitung fehlgeschlagen (${resp.status}): ${txt}`);
         } else {
           // 200 means: Workflow was accepted; progress follows via callback HTTP requests
-          await updateStatus('processing', 70, `${chunks.length} Chunks an Server übergeben. Verarbeitung wurde angenommen.`);
+          await updateStatus('processing', 75, `${chunkCount} Chunks an Server übergeben. Verarbeitung wurde angenommen.`);
         }
       }).catch(async (err) => {
         console.error(`[n8n] Webhook call failed for ${fileName}:`, err);
@@ -495,6 +524,7 @@ async function processFolderDocumentWithN8n(
     }
   } else {
     // If no webhook is set: communicate status clearly
-    await updateStatus('processing', 60, `${chunks.length} Chunks erstellt. Kein Server-Webhook konfiguriert.`);
+    const chunkCount = chunks?.length || 0;
+    await updateStatus('processing', 60, `${chunkCount} Chunks erstellt. Kein Server-Webhook konfiguriert.`);
   }
 }
