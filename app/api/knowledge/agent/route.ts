@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
+import { streamAgentResponses } from "@/lib/knowledge-agent/responses-stream"
 
 import { Database } from "@/supabase/types"
 import { env } from "@/lib/env"
@@ -223,9 +224,13 @@ async function emitKickoffTextFromModel(params: {
     const kickoffStream = await openai.chat.completions.create({
       model: AGENT_MODEL,
       stream: true,
-      tool_choice: "none",
-      // GPT-5.5 only supports the default temperature (1).
-      max_tokens: 42,
+      // Kosmetische Startzeile: kein Reasoning noetig (schnell + guenstig).
+      // gpt-5.6-terra verlangt max_completion_tokens statt max_tokens; ohne
+      // tools ist reasoning_effort:"none" zulaessig (gegen Prod verifiziert).
+      // Cast: das "none"-Enum ist neuer als openai@4.104.0-Typen, wird zur
+      // Laufzeit aber unveraendert an die API durchgereicht.
+      reasoning_effort: "none" as any,
+      max_completion_tokens: 200,
       messages: [
         {
           role: "system",
@@ -3727,8 +3732,10 @@ async function executeTool(params: {
               ]
             }
           ],
-          max_tokens: 2000,
-          // GPT-5.5 only supports the default temperature (1).
+          // gpt-5.6-terra (Reasoning-Modell) verlangt max_completion_tokens
+          // statt max_tokens; grosszuegiger Cap, damit Reasoning-Tokens die
+          // JSON-Bildanalyse nicht verhungern lassen.
+          max_completion_tokens: 6000,
         })
 
         const description = visionResponse.choices?.[0]?.message?.content || "Bildbeschreibung konnte nicht erstellt werden."
@@ -4307,13 +4314,14 @@ async function runAgentWorkflow(params: {
     // =====================================================================
     // STREAMING: Use OpenAI streaming API for real-time token delivery
     // =====================================================================
-    const stream = await openai.chat.completions.create({
+    // gpt-5.6-terra (Reasoning-Modell) fuehrt Tools nur ueber /v1/responses.
+    // streamAgentResponses kapselt den Endpoint und emittiert Chat-kompatible
+    // Chunks — der Akkumulations-Loop unten bleibt unveraendert.
+    const stream = streamAgentResponses(openai, {
       model: AGENT_MODEL,
       messages: conversation,
       tools: KNOWLEDGE_AGENT_TOOLS as any,
-      tool_choice: "auto",
-      // GPT-5.5 only supports the default temperature (1).
-      stream: true
+      toolChoice: "auto",
     })
 
     // Accumulate the streamed response
