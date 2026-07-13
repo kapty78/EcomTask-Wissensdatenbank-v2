@@ -29,6 +29,13 @@ const ServerEnvSchema = z.object({
 
   // — Cross-Agent-Auth (Service-zu-Service-Aufrufe) —
   CROSS_AGENT_SECRET: z.string().min(32),
+  // WP-D2: solange false, wird das statische Legacy-Secret (X-Cross-Agent-Secret)
+  // neben der HMAC-Signatur toleriert (Warn-Log + Zaehler). Cutover analog D1:
+  // Logs zeigen nur noch HMAC → Flag auf true, Legacy-Pfad im Folge-Release raus.
+  REQUIRE_CROSS_AGENT_HMAC: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 
   // — Wissensbasis-Pipeline (PDF-Generierung) —
   WISSENSBASIS_PIPELINE_URL: z

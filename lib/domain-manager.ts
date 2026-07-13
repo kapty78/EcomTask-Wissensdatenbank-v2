@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+
 // Namespace für localStorage-Keys
 const STORAGE_KEYS = {
   DOMAIN: "ecomtask_domain",
@@ -97,6 +99,52 @@ export const clearCompanyData = (): void => {
     } catch (error) {
       console.error("Fehler beim Löschen der Unternehmensdaten:", error)
     }
+  }
+}
+
+/**
+ * Ermittelt die Firma des eingeloggten Benutzers aus dessen Profil
+ * (profiles.company_id → companies). Das ist die verlässliche Quelle —
+ * der localStorage-Wert spiegelt nur den zuletzt im Login getippten Account
+ * und kann veraltet sein. Bei erfolgreicher Auflösung wird der localStorage
+ * synchronisiert (Self-Healing). Gibt null zurück, wenn der Benutzer keiner
+ * Firma zugeordnet ist (z. B. Super-Admin).
+ */
+export const resolveUserCompany = async (
+  supabase: SupabaseClient<any>
+): Promise<CompanyInfo | null> => {
+  try {
+    const {
+      data: { user }
+    } = await supabase.auth.getUser()
+    if (!user) return null
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("company_id")
+      .eq("id", user.id)
+      .single()
+
+    if (!profile?.company_id) return null
+
+    const { data: company } = await supabase
+      .from("companies")
+      .select("id, name, domain")
+      .eq("id", profile.company_id)
+      .single()
+
+    if (!company) return null
+
+    const info: CompanyInfo = {
+      id: company.id,
+      name: company.name,
+      domain: company.domain
+    }
+    saveCompany(info)
+    if (company.domain) saveDomain(company.domain)
+    return info
+  } catch {
+    return null
   }
 }
 

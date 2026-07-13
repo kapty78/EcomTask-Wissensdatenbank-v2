@@ -7,12 +7,19 @@ import { streamAgentResponses } from "@/lib/knowledge-agent/responses-stream"
 
 import { Database } from "@/supabase/types"
 import { env } from "@/lib/env"
+import { verifyCrossAgentHmac, timingSafeEqualStrings } from "@/lib/cross-agent-auth"
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
+import { findOverlappingChunks } from "@/lib/knowledge-agent/chunk-overlap"
 import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
 import { generateFragenprompt } from "@/lib/knowledge-agent/question-prompt"
 import { processDocument } from "@/lib/cursor-documents/processing"
+
+// Konsolidierungs-/Struktur-Läufe des Agenten überschreiten den Vercel-Default
+// von 300s (Befund 2026-07-02: Lauf bei ~300s gekillt, Dedup-Zeile blieb
+// in_progress, Orchestrator meldete fälschlich "keine Änderungen").
+export const maxDuration = 800
 
 type AgentHistoryMessage = {
   role: "assistant" | "user"
@@ -34,6 +41,10 @@ type AgentRequestBody = {
   stream?: boolean
   attachments?: AgentAttachment[]
   companyId?: string | null
+  /** SOTA-Block 3 (Budget-Vertrag): Zeitbudget des Aufrufers (Orchestrator-
+   *  Soft-Deadline minus Synthese-Reserve). Der Loop erzwingt VOR Ablauf eine
+   *  Abschluss-Synthese, statt in den Plattform-Kill zu laufen. */
+  budget?: { deadline_ms?: number }
 }
 
 type AgentToolActivity = {
@@ -483,8 +494,12 @@ async function assertKbBelongsToCompany(
   return { company_id: kb.company_id, sharing: kb.sharing }
 }
 
+// Alt-Tools sind aus dem LLM-Schema entfernt (ersetzt durch search_kb_text),
+// bleiben aber im Executor als Alias ausfuehrbar (History-Replays, alte Plaene).
+type LegacyKnowledgeAgentToolName = "search_chunks_by_text" | "search_facts_by_text"
+
 function buildToolLabel(toolName: string, args: any) {
-  switch (toolName as KnowledgeAgentToolName) {
+  switch (toolName as KnowledgeAgentToolName | LegacyKnowledgeAgentToolName) {
     case "web_search":
       return `Websuche: "${clip(String(args?.query || ""), 70)}"`
     case "import_web_page":
@@ -505,8 +520,16 @@ function buildToolLabel(toolName: string, args: any) {
       return `Chunks per Text suchen: "${clip(String(args?.query || ""), 50)}"`
     case "search_facts_by_text":
       return `Fakten per Text suchen: "${clip(String(args?.query || ""), 50)}"`
-    case "get_chunk_details":
-      return `Chunk laden: ${String(args?.chunk_id || "").slice(0, 8)}`
+    case "search_kb_text": {
+      const queries = Array.isArray(args?.queries) ? args.queries.map((q: any) => String(q ?? "").trim()).filter(Boolean) : []
+      return `Textsuche (${queries.length} Begriffe): ${clip(queries.map((q: string) => `"${q}"`).join(", "), 70)}`
+    }
+    case "get_chunk_details": {
+      const batchIds = Array.isArray(args?.chunk_ids) ? args.chunk_ids.filter(Boolean) : []
+      if (batchIds.length > 1) return `Chunks laden: ${batchIds.length} Stück`
+      const singleId = String(args?.chunk_id || batchIds[0] || "")
+      return `Chunk laden: ${singleId.slice(0, 8)}`
+    }
     case "create_chunk":
       return `Chunk erstellen${args?.document_id ? ` für ${String(args.document_id).slice(0, 8)}` : ""}`
     case "add_fact_to_chunk":
@@ -834,42 +857,49 @@ function collectToolDerivedUi(params: {
 
       case "get_chunk_details": {
         const kbId = activeKnowledgeBaseId
-        const chunkId = asOptionalString(result?.chunk?.id)
-        if (chunkId) {
-          pushReference({
-            type: "chunk",
-            id: chunkId,
-            label: `Chunk ${chunkId.slice(0, 8)}`,
-            knowledgeBaseId: kbId,
-            chunkId,
-            documentId: asOptionalString(result?.chunk?.document_id)
-          })
-        }
-
-        const facts = Array.isArray(result?.facts) ? result.facts : []
-        if (facts.length > 0) {
-          blocks.push({
-            type: "table",
-            title: "Chunk-Fakten",
-            columns: ["Typ", "Inhalt", "ID"],
-            rows: facts.slice(0, 10).map((fact: any) => [
-              asStringCell(fact?.fact_type || "fact", 24),
-              asStringCell(fact?.content || "", 110),
-              asStringCell(fact?.id || "", 60)
-            ])
-          })
-
-          for (const fact of facts.slice(0, 20)) {
-            const factId = asOptionalString(fact?.id)
-            if (!factId) continue
+        // Einzel-Format ({chunk, facts}) UND Batch-Format ({chunks: [...]})
+        // auf dieselbe Entry-Liste normalisieren.
+        const entries: any[] = Array.isArray(result?.chunks) && result.chunks.length > 0
+          ? result.chunks
+          : [result]
+        for (const entry of entries) {
+          const chunkId = asOptionalString(entry?.chunk?.id)
+          if (chunkId) {
             pushReference({
-              type: "fact",
-              id: factId,
-              label: asStringCell(fact?.content || `Fakt ${factId.slice(0, 8)}`, 90),
+              type: "chunk",
+              id: chunkId,
+              label: `Chunk ${chunkId.slice(0, 8)}`,
               knowledgeBaseId: kbId,
-              factId,
-              chunkId: chunkId || null
+              chunkId,
+              documentId: asOptionalString(entry?.chunk?.document_id)
             })
+          }
+
+          const facts = Array.isArray(entry?.facts) ? entry.facts : []
+          if (facts.length > 0) {
+            blocks.push({
+              type: "table",
+              title: chunkId ? `Chunk-Fakten (${chunkId.slice(0, 8)})` : "Chunk-Fakten",
+              columns: ["Typ", "Inhalt", "ID"],
+              rows: facts.slice(0, 10).map((fact: any) => [
+                asStringCell(fact?.fact_type || "fact", 24),
+                asStringCell(fact?.content || "", 110),
+                asStringCell(fact?.id || "", 60)
+              ])
+            })
+
+            for (const fact of facts.slice(0, 20)) {
+              const factId = asOptionalString(fact?.id)
+              if (!factId) continue
+              pushReference({
+                type: "fact",
+                id: factId,
+                label: asStringCell(fact?.content || `Fakt ${factId.slice(0, 8)}`, 90),
+                knowledgeBaseId: kbId,
+                factId,
+                chunkId: chunkId || null
+              })
+            }
           }
         }
         break
@@ -1789,11 +1819,31 @@ async function callSkillsApi(opts: {
   for (const [k, v] of Object.entries(opts.query || {})) {
     if (v != null) url.searchParams.set(k, v)
   }
-  const res = await fetch(url.toString(), {
-    method: opts.method,
-    headers: { "Content-Type": "application/json", "X-API-Key": SUPPORT_BACKEND_API_KEY },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  })
+  // WP-D4: Timeout + Graceful-Degradation. Ohne Timeout blockiert ein
+  // haengendes Skills-Backend den gesamten Agent-Run bis zum Plattform-Limit.
+  // Bei Timeout/Netzwerkfehler eine klare Meldung werfen (die per-Tool-
+  // Fehlerbehandlung der Workflow-Schleife laesst den Run weiterlaufen).
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      method: opts.method,
+      headers: { "Content-Type": "application/json", "X-API-Key": SUPPORT_BACKEND_API_KEY },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    clearTimeout(timeout)
+    const isTimeout = error instanceof Error && error.name === "AbortError"
+    throw new Error(
+      isTimeout
+        ? "Skills derzeit nicht verfügbar (Zeitüberschreitung). Bitte später erneut versuchen."
+        : "Skills derzeit nicht verfügbar (Verbindungsfehler). Bitte später erneut versuchen."
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
   const text = await res.text()
   let data: any = null
   try {
@@ -1825,6 +1875,140 @@ async function resolveActiveMailConfigId(
   return data?.id || null
 }
 
+// WP-D4: Tools, die eine kb_id aus Args/aktiver KB ableiten und KB-Daten
+// berühren. Jedes hier gelistete Tool wird vom zentralen Guard in executeTool
+// gegen die anfragende Company validiert. Pflege synchron zur Tool-Matrix
+// (docs/TENANT-GUARD-MATRIX.md). NICHT gelistet (mit Begründung): list_/create_
+// knowledge_bases (eigene company-scoped Query), present_* / web_search (kein
+// KB-Datenzugriff), Skills-Tools (Skills-API mit Company-Scope).
+const KB_SCOPED_TOOLS = new Set<string>([
+  "import_web_page", "list_documents", "get_knowledge_overview",
+  "generate_question_prompt", "search_knowledge", "debug_knowledge_search",
+  "search_chunks_by_text", "search_facts_by_text", "search_kb_text", "get_chunk_details",
+  "create_chunk", "add_fact_to_chunk", "rename_knowledge_base",
+  "rename_document", "rename_source", "update_chunk_content",
+  "update_fact_content", "delete_knowledge_base", "delete_document",
+  "delete_source", "delete_chunk", "delete_fact", "regenerate_chunk_facts",
+  "run_mismatch_analysis", "get_chunk_combine_suggestions",
+  "execute_chunk_combine", "upload_text_document", "upload_file_from_url",
+  "upload_attachment_to_kb", "verify_fact_findability", "analyze_attachment",
+  "set_active_knowledge_base",
+])
+
+// Read-only-Tools ohne Seiteneffekte auf den Session-Kontext: duerfen innerhalb
+// einer Runde PARALLEL laufen (Promise.all). Schreib-Tools und
+// set_active_knowledge_base (mutiert currentKnowledgeBaseId) bleiben seriell
+// und wirken als Barriere — nachfolgende Reads sehen den neuen Kontext.
+const PARALLEL_SAFE_TOOLS = new Set<string>([
+  "list_knowledge_bases", "list_documents", "search_knowledge",
+  "debug_knowledge_search", "search_kb_text", "search_chunks_by_text",
+  "search_facts_by_text", "get_chunk_details", "get_knowledge_overview",
+  "get_chunk_combine_suggestions", "list_skills", "verify_fact_findability",
+  "generate_question_prompt", "web_search", "analyze_attachment",
+  "present_code_block", "present_table", "present_image", "present_interactive_choices",
+])
+
+// WP-D4 / SOTA-Block 3: Tool-Results in der LLM-History budgetieren.
+// KRITISCHER Fix gegenueber dem alten blinden Byte-Slice: der zerschnitt
+// get_chunk_details mitten im JSON — das Modell merge-te seine Aenderung in
+// den GEKUERZTEN Text und schrieb ihn per update_chunk_content zurueck
+// (stiller Datenverlust am Chunk-Ende), oder loopte auf der Suche nach dem
+// "Trace" bis MAX_ROUNDS. Jetzt:
+//   1. Detail-Tools, deren Vollergebnis fuer Read-Modify-Write GEBRAUCHT
+//      wird, sind vom Clipping ausgenommen (grosszuegige Sicherheitsgrenze).
+//   2. Alle anderen Ergebnisse werden STRUKTURELL gekuerzt (Array-Items
+//      droppen + _omitted-Zaehler, lange Strings kappen) — das JSON bleibt
+//      IMMER valide und traegt einen maschinenlesbaren Hinweis statt eines
+//      Verweises auf einen fuer das Modell unerreichbaren "Trace".
+const MAX_TOOL_RESULT_HISTORY_BYTES = 2048
+/** Batch-Tools ersetzen VIELE Einzel-Calls — ihr Ergebnis darf entsprechend
+ *  mehr History-Budget tragen (1 × 16KB statt 24 × 2KB). */
+const HISTORY_BUDGET_BY_TOOL: Record<string, number> = { search_kb_text: 16_000 }
+/** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
+const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
+/** Absolute Sicherheitsgrenze auch fuer Detail-Tools (~16k Tokens). */
+const FULL_RESULT_MAX_BYTES = 64_000
+const CLIP_ARRAY_CAP = 8
+const CLIP_STRING_CAP = 400
+
+function clipValue(value: unknown, depth: number): unknown {
+  if (value == null) return value
+  if (typeof value === "string") {
+    return value.length > CLIP_STRING_CAP
+      ? value.slice(0, CLIP_STRING_CAP) + ` …[+${value.length - CLIP_STRING_CAP} Zeichen]`
+      : value
+  }
+  if (typeof value !== "object") return value
+  if (depth > 6) return "[verschachtelt gekuerzt]"
+  if (Array.isArray(value)) {
+    if (value.length <= CLIP_ARRAY_CAP) return value.map((v) => clipValue(v, depth + 1))
+    return [
+      ...value.slice(0, CLIP_ARRAY_CAP).map((v) => clipValue(v, depth + 1)),
+      { _omitted: value.length - CLIP_ARRAY_CAP, hinweis: "weitere Eintraege weggelassen — bei Bedarf gezielter suchen/filtern" },
+    ]
+  }
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = clipValue(v, depth + 1)
+  return out
+}
+
+function clipToolResultForHistory(toolName: string, result: unknown): string {
+  let json: string
+  try {
+    json = JSON.stringify(result ?? {})
+  } catch {
+    json = '"[nicht serialisierbar]"'
+  }
+  if (FULL_RESULT_TOOLS.has(toolName)) {
+    if (json.length <= FULL_RESULT_MAX_BYTES) return json
+    // Chunk jenseits der Sicherheitsgrenze: NIEMALS still kappen und ein
+    // Read-Modify-Write darauf zulassen — explizit als unvollstaendig markieren.
+    return JSON.stringify({
+      _unvollstaendig: true,
+      hinweis:
+        "Chunk-Ergebnis > 64KB — Volltext hier NICHT vollstaendig. KEIN update_chunk_content auf Basis dieses Ergebnisses durchfuehren; Chunk zuerst in kleinere Chunks aufteilen.",
+      auszug: json.slice(0, 8_000),
+    })
+  }
+  const historyBudget = HISTORY_BUDGET_BY_TOOL[toolName] ?? MAX_TOOL_RESULT_HISTORY_BYTES
+  if (json.length <= historyBudget) return json
+  try {
+    const compacted = JSON.stringify(clipValue(result ?? {}, 0))
+    if (compacted.length <= historyBudget * 4) return compacted
+    // Immer noch zu gross: nur Skalar-Felder + Array-Umfaenge behalten.
+    const scalars: Record<string, unknown> = { _gekuerzt: true, hinweis: "Ergebnis zu gross — Kernfelder unten; bei Bedarf gezielter abfragen." }
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      for (const [k, v] of Object.entries(result as Record<string, unknown>)) {
+        if (v == null) continue
+        if (typeof v === "string") scalars[k] = v.slice(0, 160)
+        else if (typeof v === "number" || typeof v === "boolean") scalars[k] = v
+        else if (Array.isArray(v)) scalars[k] = `[${v.length} Eintraege]`
+        if (Object.keys(scalars).length >= 14) break
+      }
+    }
+    return JSON.stringify(scalars)
+  } catch {
+    return JSON.stringify({ _gekuerzt: true, hinweis: "Ergebnis zu gross und nicht kompaktierbar." })
+  }
+}
+
+// WP-D4 (Spiegel von WP-A2): Secret-artige Felder vor der Persistenz maskieren.
+// Tool-Outputs werden in agent_messages.tool_output gespeichert — kein
+// Passwort/Token/Key darf dort im Klartext landen.
+const SECRET_KEY_RE = /(pass|secret|token|api[-_]?key|authorization|credential|bearer)/i
+function redactSecretsDeep(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value == null) return value
+  if (Array.isArray(value)) return value.map((v) => redactSecretsDeep(v, depth + 1))
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SECRET_KEY_RE.test(k) && typeof v === "string" ? "[redacted]" : redactSecretsDeep(v, depth + 1)
+    }
+    return out
+  }
+  return value
+}
+
 async function executeTool(params: {
   toolName: string
   args: any
@@ -1848,7 +2032,27 @@ async function executeTool(params: {
     attachments
   } = params
 
-  switch (toolName as KnowledgeAgentToolName) {
+  // ── WP-D4: Zentraler Tenant-Scope-Guard ────────────────────────────────
+  // resolveKnowledgeBaseId nimmt JEDE args.knowledge_base_id (Z.432). Im
+  // Cross-Agent-Modus ist authClient = serviceClient → RLS umgangen. Deshalb
+  // MUSS jedes Tool, das eine kb_id aus Args/aktiver KB ableitet, die KB
+  // gegen die anfragende Company validieren (assertKbBelongsToCompany wirft
+  // bei Fremd-Company, Z.467). Entitaeten (chunk/fact/document) sind ueber
+  // ihre KB-Bindung transitiv abgedeckt (getChunkAndDocument /
+  // resolveDocumentForKb / fact∈kb-Check), sobald die KB selbst validiert ist.
+  // NEUE kb-gebundene Tools MUESSEN hier eingetragen werden (Matrix:
+  // docs/TENANT-GUARD-MATRIX.md). Tools mit Sonder-Resolution (Name-Suche)
+  // scopen zusaetzlich inline — siehe set_active_knowledge_base.
+  if (KB_SCOPED_TOOLS.has(toolName)) {
+    const kbForScope = asOptionalString(args?.knowledge_base_id) || activeKnowledgeBaseId
+    // Fehlt eine KB ganz, wirft das Tool selbst die passende Meldung
+    // (requireKnowledgeBaseId). Eine vorhandene KB IMMER validieren.
+    if (kbForScope) {
+      await assertKbBelongsToCompany(serviceClient, kbForScope, defaultCompanyId, userId)
+    }
+  }
+
+  switch (toolName as KnowledgeAgentToolName | LegacyKnowledgeAgentToolName) {
     // ── Mail-Agent Skills (feature 002) ──────────────────────────────
     case "list_skills": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skills nicht verfügbar.")
@@ -2156,10 +2360,18 @@ async function executeTool(params: {
       }
 
       const searchName = byName as string
-      const { data: candidates, error } = await authClient
+      // WP-D4: Name-Suche scoped auf die Company. Im Cross-Agent-Modus
+      // umgeht serviceClient die RLS — ohne diesen Filter fände die Suche
+      // fremde KBs gleichen Namens (der zentrale Guard greift hier nicht,
+      // weil keine knowledge_base_id in den Args steht).
+      let candidateQuery = authClient
         .from("knowledge_bases")
         .select("id, name, company_id")
         .ilike("name", `%${searchName}%`)
+      if (defaultCompanyId) {
+        candidateQuery = candidateQuery.eq("company_id", defaultCompanyId)
+      }
+      const { data: candidates, error } = await candidateQuery
         .order("updated_at", { ascending: false })
         .limit(5)
 
@@ -2523,7 +2735,7 @@ async function executeTool(params: {
           `0 chunks returned: ${raw} raw hits → ${meta.deduplicated_chunks ?? 0} dedup → ${droppedThr} dropped < ${minThr} threshold, ${droppedAmb} dropped by ambiguous floor.`
         )
         if (raw === 0) {
-          verdicts.push("Keine einzige Vector/Hybrid/Graph-Channel hat überhaupt Treffer geliefert. Embedding-Mismatch — der Inhalt ist semantisch sehr weit weg von der Anfrage. Probiere search_chunks_by_text mit Schlüsselwörtern aus der Anfrage.")
+          verdicts.push("Keine einzige Vector/Hybrid/Graph-Channel hat überhaupt Treffer geliefert. Embedding-Mismatch — der Inhalt ist semantisch sehr weit weg von der Anfrage. Probiere search_kb_text mit Schlüsselwörtern aus der Anfrage (alle Begriffe in EINEM Aufruf).")
         } else if (droppedThr > 0 || droppedAmb > 0) {
           verdicts.push(`Treffer waren da, wurden aber gefiltert. Wenn der erwartete Chunk dabei war: Fakt-Wording schärfen oder explizit zur Anfrage passenden Fakt anlegen.`)
         }
@@ -2589,6 +2801,63 @@ async function executeTool(params: {
             matched_facts: (c.matched_facts || []).slice(0, 5),
           })),
         }
+      } as ToolExecutionResult
+    }
+
+    case "search_kb_text": {
+      // Batch-Textsuche: ALLE Begriffe in EINER Postgres-RPC (Chunks + Fakten),
+      // ersetzt die frueheren Einzel-Calls search_chunks_by_text/-facts_by_text
+      // (pro Begriff 2 Tool-Calls x bis zu 12 DB-Roundtrips → jetzt 1 RPC).
+      const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
+      const rawQueries: unknown[] = Array.isArray(args?.queries)
+        ? args.queries
+        : typeof args?.query === "string" ? [args.query] : []
+      const queries = Array.from(
+        new Set(rawQueries.map((q) => String(q ?? "").trim()).filter((q) => q.length >= 2))
+      ).slice(0, 10)
+      if (queries.length === 0) {
+        throw new Error("queries muss mindestens einen Begriff mit >= 2 Zeichen enthalten")
+      }
+      const chunkLimit = asLimit(args?.chunk_limit, 5, 20)
+      const factLimit = asLimit(args?.fact_limit, 6, 30)
+
+      const { data, error } = await authClient.rpc("search_kb_text_batch", {
+        p_kb_id: resolvedKbId,
+        p_queries: queries,
+        p_chunk_limit: chunkLimit,
+        p_fact_limit: factLimit
+      })
+      if (error) {
+        throw new Error(`Textsuche fehlgeschlagen: ${error.message}`)
+      }
+
+      const rpcResults = Array.isArray((data as any)?.results) ? (data as any).results : []
+      // Previews kompakt halten — die RPC liefert bis 400 Zeichen, fuer die
+      // LLM-History reichen kuerzere Ausschnitte (Volltext via get_chunk_details).
+      const results = rpcResults.map((r: any) => ({
+        query: String(r?.query ?? ""),
+        chunk_total: Number(r?.chunk_total ?? 0),
+        chunks: (Array.isArray(r?.chunks) ? r.chunks : []).map((c: any) => ({
+          chunk_id: c?.chunk_id,
+          content_preview: clip(String(c?.content_preview || ""), 200),
+          content_position: c?.content_position,
+          document_id: c?.document_id,
+          document_name: c?.document_name ?? null,
+          fact_count: Number(c?.fact_count ?? 0)
+        })),
+        fact_total: Number(r?.fact_total ?? 0),
+        facts: (Array.isArray(r?.facts) ? r.facts : []).map((f: any) => ({
+          fact_id: f?.fact_id,
+          content: clip(String(f?.content || ""), 200),
+          question: clip(String(f?.question || ""), 140),
+          fact_type: f?.fact_type ?? null,
+          source_name: f?.source_name ?? null,
+          source_chunk: f?.source_chunk ?? null
+        }))
+      }))
+
+      return {
+        result: { knowledge_base_id: resolvedKbId, queries, results }
       } as ToolExecutionResult
     }
 
@@ -2722,22 +2991,31 @@ async function executeTool(params: {
 
     case "get_chunk_details": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
-      const chunkId = asString(args?.chunk_id, "chunk_id")
-      const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
-
-      const { data: facts, error: factsError } = await authClient
-        .from("knowledge_items")
-        .select("id, content, question, fact_type, source_name, created_at")
-        .eq("source_chunk", chunkId)
-        .order("created_at", { ascending: false })
-        .limit(10)
-
-      if (factsError) {
-        throw new Error(`Fakten konnten nicht geladen werden: ${factsError.message}`)
+      // Batch-faehig: chunk_ids[] laedt mehrere Chunks parallel in EINEM
+      // Tool-Call (statt N sequenzieller Runden). chunk_id bleibt als
+      // Einzel-Variante mit unveraendertem Ergebnisformat erhalten.
+      const requestedIds: string[] = Array.isArray(args?.chunk_ids)
+        ? args.chunk_ids.map((x: any) => String(x ?? "").trim()).filter(Boolean)
+        : []
+      const singleId = asOptionalString(args?.chunk_id)
+      if (singleId) requestedIds.unshift(singleId)
+      const chunkIds = Array.from(new Set(requestedIds)).slice(0, 8)
+      if (chunkIds.length === 0) {
+        throw new Error("chunk_id oder chunk_ids ist erforderlich")
       }
 
-      return {
-        result: {
+      const loadOne = async (chunkId: string) => {
+        const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
+        const { data: facts, error: factsError } = await authClient
+          .from("knowledge_items")
+          .select("id, content, question, fact_type, source_name, created_at")
+          .eq("source_chunk", chunkId)
+          .order("created_at", { ascending: false })
+          .limit(10)
+        if (factsError) {
+          throw new Error(`Fakten konnten nicht geladen werden: ${factsError.message}`)
+        }
+        return {
           chunk: {
             id: chunk.id,
             position: chunk.content_position,
@@ -2758,6 +3036,25 @@ async function executeTool(params: {
             content: clip(String(fact.content || fact.question || ""), 220),
             created_at: fact.created_at
           }))
+        }
+      }
+
+      if (chunkIds.length === 1) {
+        return { result: await loadOne(chunkIds[0]) } as ToolExecutionResult
+      }
+
+      const settled = await Promise.allSettled(chunkIds.map(loadOne))
+      const chunks: any[] = []
+      const loadErrors: Array<{ chunk_id: string; error: string }> = []
+      settled.forEach((s, i) => {
+        if (s.status === "fulfilled") chunks.push(s.value)
+        else loadErrors.push({ chunk_id: chunkIds[i], error: s.reason?.message || "Chunk konnte nicht geladen werden." })
+      })
+      return {
+        result: {
+          count: chunks.length,
+          chunks,
+          ...(loadErrors.length > 0 ? { errors: loadErrors } : {})
         }
       } as ToolExecutionResult
     }
@@ -2825,6 +3122,55 @@ async function executeTool(params: {
 
       if (relationStatus === "other") {
         throw new Error("Dokument gehört nicht zur aktiven Wissensdatenbank.")
+      }
+
+      // Struktur-Waechter-Guard (2026-07-02): kein stilles Anlegen von
+      // Duplikat-/Streu-Chunks. Kandidaten = Chunks des Ziel-Dokuments +
+      // Chunks mit Facts in dieser KB (gleicher pragmatischer Scope wie
+      // search_chunks_by_text). success:false statt throw, damit der Agent
+      // den bestehenden Chunk erweitert statt blind zu retryen.
+      if (args?.force_create !== true) {
+        const candidateIds = new Set<string>()
+        const { data: docChunkRows } = await serviceClient
+          .from("document_chunks")
+          .select("id")
+          .eq("document_id", documentId)
+          .limit(100)
+        for (const r of (docChunkRows || []) as any[]) candidateIds.add(r.id)
+        const { data: kbFactRows } = await authClient
+          .from("knowledge_items")
+          .select("source_chunk")
+          .eq("knowledge_base_id", resolvedKbId)
+          .not("source_chunk", "is", null)
+          .limit(1000)
+        for (const r of (kbFactRows || []) as any[]) {
+          if (r.source_chunk) candidateIds.add(r.source_chunk)
+          if (candidateIds.size >= 300) break
+        }
+
+        const candidates: Array<{ id: string; content: string | null; document_id?: string | null }> = []
+        const idList = Array.from(candidateIds)
+        for (let i = 0; i < idList.length; i += 100) {
+          const slice = idList.slice(i, i + 100)
+          const { data: rows } = await serviceClient
+            .from("document_chunks")
+            .select("id, content, document_id")
+            .in("id", slice)
+          if (Array.isArray(rows)) candidates.push(...(rows as any[]))
+        }
+
+        const suspects = findOverlappingChunks(content, candidates)
+        if (suspects.length > 0) {
+          return {
+            result: {
+              success: false,
+              duplicate_check: "overlap_detected",
+              duplicate_suspects: suspects,
+              message:
+                "NICHT angelegt: Es existiert bereits mindestens ein Chunk mit starker inhaltlicher Ueberlappung. PFLICHT: den bestehenden Chunk via get_chunk_details + update_chunk_content ERWEITERN (Kategorie-Artikel statt Streu-Chunks — konkurrierende Chunks machen das RAG-Verhalten unvorhersagbar). Nur wenn der User einen bewussten Parallel-Chunk nach explizitem Hinweis bestaetigt hat: erneut mit force_create: true aufrufen.",
+            }
+          } as ToolExecutionResult
+        }
       }
 
       const { data: existingChunks, error: positionError } = await serviceClient
@@ -4136,8 +4482,10 @@ async function runAgentWorkflow(params: {
   crossAgentCompanyId?: string | null
   emit?: AgentStreamEmitter
   enableKickoffStream?: boolean
+  /** WP-D2: X-Trace-Id des Orchestrator-Turns — in agent_messages.metadata geloggt. */
+  traceId?: string | null
 }): Promise<AgentRunResult> {
-  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream } = params
+  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream, traceId } = params
   const emit = params.emit || (() => {})
 
   const requestedConversationId = asOptionalString(body.conversationId)
@@ -4252,9 +4600,12 @@ async function runAgentWorkflow(params: {
     knowledgeBaseId: currentKnowledgeBaseId,
     role: "user",
     content: message,
-    metadata: Array.isArray(body.attachments) && body.attachments.length > 0
-      ? { attachments: body.attachments }
-      : undefined
+    metadata: {
+      ...(Array.isArray(body.attachments) && body.attachments.length > 0
+        ? { attachments: body.attachments }
+        : {}),
+      ...(traceId ? { trace_id: traceId } : {})
+    }
   })
 
   // Build user message with optional attachments (images as image_url, files as context)
@@ -4312,7 +4663,56 @@ async function runAgentWorkflow(params: {
   const toolExecutionRecords: ToolExecutionRecord[] = []
   const maxToolRounds = 14
 
+  // ── SOTA-Block 3: Zeitbudget-Vertrag ────────────────────────────────────
+  // Der Aufrufer (Support-AI-Orchestrator) gibt sein verbleibendes Turn-
+  // Budget mit. Der Loop erzwingt VOR Ablauf eine Abschluss-Synthese statt
+  // in den Plattform-Kill (maxDuration) oder die Orchestrator-Deadline zu
+  // laufen — vorher liefen Konsolidierungs-Jobs ~250s und starben trotzdem.
+  const runStartedAt = Date.now()
+  const WDB_DEFAULT_DEADLINE_MS = 600_000
+  const FINALIZE_RESERVE_MS = 30_000
+  const requestedDeadlineMs = Number((params.body as any)?.budget?.deadline_ms)
+  const deadlineMs = Number.isFinite(requestedDeadlineMs) && requestedDeadlineMs > 0
+    ? Math.max(30_000, Math.min(WDB_DEFAULT_DEADLINE_MS, requestedDeadlineMs))
+    : WDB_DEFAULT_DEADLINE_MS
+  let budgetExhausted = false
+  // Vollergebnisse der FULL_RESULT_TOOLS (bis 64KB pro Chunk) duerfen nicht
+  // fuer alle Restrunden verbatim in der History bleiben — nach 2 Runden
+  // werden sie in-place durch einen Digest ersetzt (Review-Finding). Vor
+  // einem update_chunk_content muss der Agent den Chunk ohnehin frisch lesen.
+  const fullResultLedger: Array<{ index: number; round: number; toolName: string; digested?: boolean }> = []
+
   for (let round = 0; round < maxToolRounds; round++) {
+    for (const entry of fullResultLedger) {
+      if (entry.digested || entry.round > round - 2) continue
+      const msg = conversation[entry.index]
+      if (msg?.role === "tool" && typeof msg.content === "string") {
+        msg.content = JSON.stringify({
+          _digest: true,
+          tool: entry.toolName,
+          gelesen_in_runde: entry.round + 1,
+          hinweis:
+            "Volltext wurde in einer frueheren Runde gelesen und ist hier entfernt. VOR einem update_chunk_content den Chunk ZWINGEND erneut per get_chunk_details lesen — niemals aus dem Gedaechtnis schreiben.",
+        })
+      }
+      entry.digested = true
+    }
+
+    const elapsedMs = Date.now() - runStartedAt
+    if (round > 0 && elapsedMs > deadlineMs - FINALIZE_RESERVE_MS) {
+      console.warn(`[knowledge-agent] Zeitbudget erreicht nach Runde ${round} (${Math.round(elapsedMs / 1000)}s/${Math.round(deadlineMs / 1000)}s) — erzwinge Abschluss-Synthese.`)
+      budgetExhausted = true
+      break
+    }
+    // Konvergenz-Druck: das Modell sieht sein Restbudget und priorisiert
+    // Abschluss + gebatchte Verifikation statt Verify-Schleifen pro Schritt.
+    if (round > 0) {
+      const remainingS = Math.max(0, Math.round((deadlineMs - elapsedMs) / 1000))
+      conversation.push({
+        role: "system",
+        content: `BUDGET: Runde ${round + 1}/${maxToolRounds}, noch ~${remainingS}s. Priorisiere Abschluss. Verifikation BATCHEN (eine Pruefung nach allen Schreibschritten, nicht pro Schritt). Unabhaengige Tool-Calls in EINER Antwort buendeln.`,
+      })
+    }
     // =====================================================================
     // STREAMING: Use OpenAI streaming API for real-time token delivery
     // =====================================================================
@@ -4390,6 +4790,9 @@ async function runAgentWorkflow(params: {
       if (toolActivities.length > 0) {
         assistantMetadata.toolActivities = toolActivities
       }
+      if (traceId) {
+        assistantMetadata.trace_id = traceId
+      }
 
       await persistAgentMessage({
         serviceClient,
@@ -4429,7 +4832,13 @@ async function runAgentWorkflow(params: {
       tool_calls: resolvedToolCalls
     })
 
-    for (const toolCall of resolvedToolCalls) {
+    // SOTA-WDB-Speedup: Der Per-Tool-Body laeuft unveraendert, aber der
+    // Dispatcher darunter buendelt aufeinanderfolgende Read-only-Calls in
+    // Promise.all — 5 parallele Suchen kosten die Zeit der langsamsten statt
+    // der Summe. Conversation-Pushes bleiben valide (OpenAI verlangt nur
+    // EINE tool-Message pro tool_call_id, keine Reihenfolge); Kontext-
+    // Mutationen passieren nur in seriellen Schreib-Tools.
+    const runOneToolCall = async (toolCall: (typeof resolvedToolCalls)[number]) => {
       const toolName = toolCall.function?.name || "unknown"
       const args = parseArgs(toolCall.function?.arguments)
       const label = buildToolLabel(toolName, args)
@@ -4529,8 +4938,11 @@ async function runAgentWorkflow(params: {
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: JSON.stringify(execution?.result ?? {})
+          content: clipToolResultForHistory(toolName, execution?.result ?? {})
         })
+        if (FULL_RESULT_TOOLS.has(toolName)) {
+          fullResultLedger.push({ index: conversation.length - 1, round, toolName })
+        }
 
         await persistAgentMessage({
           serviceClient,
@@ -4543,8 +4955,8 @@ async function runAgentWorkflow(params: {
           toolName,
           toolCallId: toolCall.id,
           toolStatus: "done",
-          toolInput: args,
-          toolOutput: execution?.result ?? {}
+          toolInput: redactSecretsDeep(args),
+          toolOutput: redactSecretsDeep(execution?.result ?? {})
         })
       } catch (error: any) {
         const errorMessage = error?.message || "Tool konnte nicht ausgeführt werden."
@@ -4594,6 +5006,27 @@ async function runAgentWorkflow(params: {
         })
       }
     }
+
+    // ── Dispatcher: Read-Gruppen parallel, Schreib-Tools seriell ─────────
+    let dispatchCursor = 0
+    while (dispatchCursor < resolvedToolCalls.length) {
+      const isParallelSafe = (tc: (typeof resolvedToolCalls)[number]) =>
+        PARALLEL_SAFE_TOOLS.has(tc.function?.name || "")
+      if (isParallelSafe(resolvedToolCalls[dispatchCursor])) {
+        const group: typeof resolvedToolCalls = []
+        while (
+          dispatchCursor < resolvedToolCalls.length &&
+          isParallelSafe(resolvedToolCalls[dispatchCursor])
+        ) {
+          group.push(resolvedToolCalls[dispatchCursor])
+          dispatchCursor++
+        }
+        await Promise.all(group.map(runOneToolCall))
+      } else {
+        await runOneToolCall(resolvedToolCalls[dispatchCursor])
+        dispatchCursor++
+      }
+    }
   }
 
   await syncConversationContext({
@@ -4603,17 +5036,72 @@ async function runAgentWorkflow(params: {
     knowledgeBaseId: currentKnowledgeBaseId
   })
 
-  const fallbackMessage =
-    "Ich habe mehrere Tool-Schritte ausgeführt, konnte aber keine stabile Abschlussantwort erzeugen. Bitte formuliere die Anfrage etwas konkreter."
+  // ── SOTA-Block 3: Erzwungene Abschluss-Synthese ─────────────────────────
+  // Statt eines statischen "konnte keine stabile Antwort erzeugen" fasst das
+  // Modell in EINEM tool-freien Call zusammen: was wurde erledigt (Chunks/
+  // IDs), was wurde verifiziert, was ist offen. Der Aufrufer bekommt damit
+  // einen verwertbaren Zustandsbericht statt eines Ratespiels.
+  const exitCode = budgetExhausted ? "WDB_DEADLINE" : "MAX_ROUNDS"
+  conversation.push({
+    role: "system",
+    content: budgetExhausted
+      ? "ZEITBUDGET ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist."
+      : "RUNDEN-LIMIT ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist.",
+  })
+  let synthText = ""
+  try {
+    // tool_choice:"none" verhindert weitere Tool-Calls hart; tools bleibt im
+    // Call (das Weglassen ist gegen den Prod-Account nicht verifizierbar —
+    // siehe Support AI route.ts, gleiche Begruendung). 25s-Deckel, damit die
+    // Finalize-Reserve haelt.
+    const synthStream = await openai.chat.completions.create(
+      {
+        model: AGENT_MODEL,
+        messages: conversation,
+        tools: KNOWLEDGE_AGENT_TOOLS as any,
+        tool_choice: "none",
+        stream: true,
+      },
+      { signal: AbortSignal.timeout(Math.max(10_000, FINALIZE_RESERVE_MS - 5_000)) }
+    )
+    for await (const chunk of synthStream) {
+      const delta = chunk.choices?.[0]?.delta
+      if (delta?.content) {
+        synthText += delta.content
+        emit("text_delta", { text: delta.content })
+      }
+    }
+  } catch (synthError) {
+    console.warn("[knowledge-agent] Abschluss-Synthese fehlgeschlagen/timeout:", synthError)
+  }
+
+  const fallbackMessage = synthText.trim().length > 0
+    ? synthText.trim()
+    : "Ich habe mehrere Tool-Schritte ausgeführt, konnte aber keine stabile Abschlussantwort erzeugen. Die ausgeführten Schritte stehen im Trace — bitte Stand per Read-Tool prüfen, bevor etwas wiederholt wird."
   const fallbackRichContent = collectToolDerivedUi({
     finalText: fallbackMessage,
     records: toolExecutionRecords,
     activeKnowledgeBaseId: currentKnowledgeBaseId
   })
 
-  emit("text_delta", { text: fallbackMessage })
+  if (synthText.trim().length === 0) {
+    emit("text_delta", { text: fallbackMessage })
+  }
   emit("assistant_done", {
     richContent: fallbackRichContent.blocks.length > 0 ? fallbackRichContent : null
+  })
+
+  // Abschluss-Antwort persistieren (Parity mit dem normalen Final-Pfad) —
+  // vorher verschwand der Max-Rounds-Bericht aus der Conversation-Historie.
+  await persistAgentMessage({
+    serviceClient,
+    conversationId,
+    userId: user.id,
+    companyId: currentCompanyId,
+    knowledgeBaseId: currentKnowledgeBaseId,
+    role: "assistant",
+    content: fallbackMessage,
+    metadata: toolActivities.length > 0 ? { toolActivities, ...(traceId ? { trace_id: traceId } : {}) } : (traceId ? { trace_id: traceId } : undefined)
   })
 
   return {
@@ -4623,26 +5111,94 @@ async function runAgentWorkflow(params: {
     activeKnowledgeBaseId: currentKnowledgeBaseId,
     conversationId,
     contractVersion: 2,
-    // Max-Rounds ohne stabile Antwort ist KEIN Erfolg (WP-D1/C5).
+    // Abbruch ohne stabile Antwort ist KEIN Erfolg (WP-D1/C5).
     ok: false,
     summary: fallbackMessage.slice(0, 500),
     changes: collectedChanges,
-    errors: collectedErrors.length > 0 ? collectedErrors : [{ tool: "runner", code: "MAX_ROUNDS", message: "max_rounds_reached" }]
+    // Exit-Grund IMMER anhaengen (nicht nur bei leeren Tool-Fehlern) — der
+    // Orchestrator muss wissen, WARUM der Lauf endete (Deadline vs. Runden).
+    errors: [
+      ...collectedErrors,
+      {
+        tool: "runner",
+        code: exitCode,
+        message: budgetExhausted
+          ? "Zeitbudget erreicht — Lauf kontrolliert beendet (Teil-Aenderungen moeglich, Stand siehe Abschlussantwort)."
+          : "max_rounds_reached"
+      }
+    ]
   }
 }
 
+// WP-D2: Legacy-Auth-Aufrufe zaehlen (Cutover-Kriterium analog WP-D1).
+let legacySecretAuthCount = 0
+
 export async function POST(request: NextRequest) {
   try {
-    const body: AgentRequestBody = await request.json()
+    // WP-D2: Raw-Body lesen — die HMAC-Signatur deckt sha256(body) ab,
+    // deshalb darf hier nicht direkt request.json() geparst werden.
+    const rawBody = await request.text()
+    let body: AgentRequestBody
+    try {
+      body = JSON.parse(rawBody)
+    } catch {
+      return NextResponse.json({ error: "Ungueltiger JSON-Body." }, { status: 400 })
+    }
     const message = compact(String(body.message || ""))
 
     if (!message) {
       return NextResponse.json({ error: "Nachricht ist erforderlich." }, { status: 400 })
     }
 
-    // Cross-Agent auth: accept X-Cross-Agent-Secret as alternative to user session
-    const crossAgentSecret = request.headers.get("x-cross-agent-secret")
-    const isCrossAgentRequest = !!crossAgentSecret && crossAgentSecret === env.CROSS_AGENT_SECRET
+    const traceId = request.headers.get("x-trace-id")
+
+    // ── Cross-Agent-Auth (WP-D2) ────────────────────────────────────
+    // Neuer Pfad: HMAC ueber Canonical Request (Signature/Timestamp/
+    // Request-Id-Header). Legacy-Pfad: statisches X-Cross-Agent-Secret —
+    // toleriert bis REQUIRE_CROSS_AGENT_HMAC=true (Cutover wie WP-D1:
+    // erst wenn die Logs nur noch HMAC zeigen).
+    const hmacSignature = request.headers.get("x-cross-agent-signature")
+    const hmacTimestamp = request.headers.get("x-cross-agent-timestamp")
+    const hmacRequestId = request.headers.get("x-cross-agent-request-id")
+    const legacyCrossAgentSecret = request.headers.get("x-cross-agent-secret")
+
+    let isCrossAgentRequest = false
+    let dedupRequestId: string | null = null
+
+    if (hmacSignature || hmacTimestamp || hmacRequestId) {
+      const verdict = verifyCrossAgentHmac({
+        secret: env.CROSS_AGENT_SECRET,
+        method: "POST",
+        path: "/api/knowledge/agent",
+        signature: hmacSignature,
+        timestamp: hmacTimestamp,
+        requestId: hmacRequestId,
+        rawBody
+      })
+      if (!verdict.ok) {
+        return NextResponse.json(
+          { error: `Cross-Agent-Auth fehlgeschlagen: ${verdict.reason}` },
+          { status: 401 }
+        )
+      }
+      isCrossAgentRequest = true
+      dedupRequestId = verdict.requestId
+    } else if (legacyCrossAgentSecret) {
+      if (env.REQUIRE_CROSS_AGENT_HMAC) {
+        return NextResponse.json(
+          { error: "Cross-Agent-Aufrufe erfordern eine HMAC-Signatur (REQUIRE_CROSS_AGENT_HMAC aktiv)." },
+          { status: 401 }
+        )
+      }
+      if (timingSafeEqualStrings(legacyCrossAgentSecret, env.CROSS_AGENT_SECRET)) {
+        legacySecretAuthCount += 1
+        console.warn(
+          `[knowledge-agent] Legacy-Secret-Auth #${legacySecretAuthCount} — Cutover auf HMAC nach Log-Pruefung (WP-D2).`
+        )
+        isCrossAgentRequest = true
+      }
+      // Falsches Secret: faellt wie bisher in den User-Session-Pfad → 401 dort.
+    }
 
     const serviceClient = createClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -4687,6 +5243,86 @@ export async function POST(request: NextRequest) {
 
     const internalApiBaseUrl = request.nextUrl.origin
 
+    // ── Request-Dedup (WP-D2): Insert-or-Return ─────────────────────
+    // Agent-Runs sind nicht idempotent. Erst diese Dedup macht den
+    // Bridge-Retry sicher — und sie ist zugleich der Replay-Schutz der
+    // HMAC-Auth (eine gesehene requestId startet nie einen zweiten Run).
+    if (dedupRequestId) {
+      const dedupInsert = await (serviceClient as any)
+        .from("agent_request_dedup")
+        .insert({
+          request_id: dedupRequestId,
+          conversation_id: asOptionalString(body.conversationId) ?? null,
+          company_id: crossAgentCompanyId,
+          trace_id: traceId
+        })
+
+      if (dedupInsert.error) {
+        if (dedupInsert.error.code === "23505") {
+          // Bereits gesehen: abgeschlossen → gespeicherte Antwort; laufend → 409.
+          const { data: existing } = await (serviceClient as any)
+            .from("agent_request_dedup")
+            .select("status, response, created_at")
+            .eq("request_id", dedupRequestId)
+            .maybeSingle()
+          if (existing?.status === "completed" && existing.response) {
+            return NextResponse.json({ ...existing.response, dedupHit: true })
+          }
+          // Eine in_progress-Zeile älter als der Stale-TTL stammt fast sicher
+          // von einem gekillten Function-Run (z.B. maxDuration erreicht). Der
+          // Run kann TEILWEISE geschrieben haben — das muss der Aufrufer
+          // erfahren, statt ewig "wird verarbeitet" zu sehen.
+          const STALE_RUN_TTL_MS = 15 * 60 * 1000
+          const startedAt = existing?.created_at ? Date.parse(existing.created_at) : NaN
+          if (existing?.status === "in_progress" && Number.isFinite(startedAt) && Date.now() - startedAt > STALE_RUN_TTL_MS) {
+            return NextResponse.json(
+              {
+                error:
+                  "Der fruehere Lauf mit dieser Request-Id wurde vermutlich abgebrochen (aelter als 15 Minuten, kein Ergebnis gespeichert). Er kann bereits Teil-Aenderungen geschrieben haben — Bestand pruefen statt blind neu starten.",
+                code: "REQUEST_STALE"
+              },
+              { status: 409 }
+            )
+          }
+          return NextResponse.json(
+            { error: "Anfrage mit dieser Request-Id wird bereits verarbeitet.", code: "REQUEST_IN_PROGRESS" },
+            { status: 409 }
+          )
+        }
+        // Dedup-Infrastruktur defekt → fail-closed: ohne Dedup-Garantie
+        // darf kein Run starten (Retry koennte sonst doppelt ausfuehren).
+        console.error("[knowledge-agent] Dedup-Insert fehlgeschlagen:", dedupInsert.error.message)
+        return NextResponse.json(
+          { error: "Request-Deduplizierung nicht verfuegbar — Anfrage abgelehnt.", code: "DEDUP_UNAVAILABLE" },
+          { status: 503 }
+        )
+      }
+    }
+
+    const markDedupCompleted = async (result: AgentRunResult) => {
+      if (!dedupRequestId) return
+      // Contract-v2-Subset speichern (ohne richContent/toolActivities — Groesse).
+      const storedResponse = {
+        message: result.message,
+        contractVersion: 2,
+        ok: result.ok,
+        summary: result.summary,
+        changes: result.changes,
+        errors: result.errors,
+        conversationId: result.conversationId,
+        activeKnowledgeBaseId: result.activeKnowledgeBaseId,
+        toolActivities: []
+      }
+      const { error: dedupUpdateError } = await (serviceClient as any)
+        .from("agent_request_dedup")
+        .update({ status: "completed", response: storedResponse })
+        .eq("request_id", dedupRequestId)
+      if (dedupUpdateError) {
+        // Nicht fatal fuer DIESE Antwort — aber ein Retry wuerde 409 sehen.
+        console.error("[knowledge-agent] Dedup-Completion fehlgeschlagen:", dedupUpdateError.message)
+      }
+    }
+
     const wantsStream =
       body.stream === true ||
       request.headers.get("accept")?.toLowerCase().includes("text/event-stream") === true
@@ -4700,8 +5336,10 @@ export async function POST(request: NextRequest) {
         serviceClient,
         internalApiBaseUrl,
         crossAgentCompanyId,
-        enableKickoffStream: false
+        enableKickoffStream: false,
+        traceId
       })
+      await markDedupCompleted(result)
       return NextResponse.json(result)
     }
 
@@ -4716,6 +5354,17 @@ export async function POST(request: NextRequest) {
           )
         }
 
+        // SOTA-Block 3: SSE-Heartbeat. Die Bridge der Support AI faehrt einen
+        // 90s-Idle-Timeout — ohne Ping riss ein GESUNDER Stream bei jeder
+        // laengeren stillen Phase (grosser LLM-Prefill, langsames Tool) ab
+        // und loeste den teuren Fallback-/Busy-Poll-Pfad aus. Der Ping haelt
+        // den Idle-Timer am Leben; Konsumenten ignorieren unbekannte Events.
+        const pingTimer = setInterval(() => {
+          try {
+            send("ping", { t: Date.now() })
+          } catch { /* Verbindung weg — Ping ist best-effort, Lauf laeuft weiter */ }
+        }, 12_000)
+
         ;(async () => {
           try {
             send("ready", { ok: true })
@@ -4728,8 +5377,10 @@ export async function POST(request: NextRequest) {
               internalApiBaseUrl,
               crossAgentCompanyId,
               enableKickoffStream: true,
+              traceId,
               emit: (event, payload) => send(event, payload)
             })
+            await markDedupCompleted(result)
             // Text was already streamed via text_delta events.
             // Rich content was sent via assistant_done event.
             send("done", {
@@ -4747,6 +5398,7 @@ export async function POST(request: NextRequest) {
               error: error?.message || "Interner Fehler im Agenten."
             })
           } finally {
+            clearInterval(pingTimer)
             if (!closed) {
               closed = true
               controller.close()

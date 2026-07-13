@@ -6,7 +6,7 @@ import { getSupabaseClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Search, Loader2 } from 'lucide-react'
-import { getSavedCompany } from '@/lib/domain-manager'
+import { getSavedCompany, resolveUserCompany } from '@/lib/domain-manager'
 
 interface SearchResult {
   id: string
@@ -53,14 +53,15 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
       if (user) {
         setUserId(user.id)
       }
+      // Echte Firma aus dem Profil bevorzugen; localStorage nur als Fallback
+      // für Super-Admins ohne eigene Firmenzuordnung.
+      const company = (await resolveUserCompany(supabase)) ?? getSavedCompany()
+      if (company?.id) {
+        setCompanyId(company.id)
+      }
     }
     getUser()
-    
-    const company = getSavedCompany()
-    if (company?.id) {
-      setCompanyId(company.id)
-    }
-  }, [supabase.auth])
+  }, [supabase])
 
   // Keine Speicherung mehr im sessionStorage - Daten verschwinden beim Neuladen
 

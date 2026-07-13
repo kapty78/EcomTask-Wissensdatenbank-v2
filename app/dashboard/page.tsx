@@ -2,7 +2,7 @@
 
 import { getSupabaseClient } from "@/lib/supabase-browser"
 import { useEffect, useState, useRef } from "react"
-import { getSavedDomain, getSavedCompany } from "@/lib/domain-manager"
+import { clearCompanyData, resolveUserCompany } from "@/lib/domain-manager"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
   const [canUpload, setCanUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'knowledge' | 'admin'>('knowledge')
+  // Echte Firma des eingeloggten Benutzers (aus profiles.company_id, nicht localStorage)
+  const [companyName, setCompanyName] = useState<string | null>(null)
   
   // State für das Einladungs-Dropdown
   const [showInviteDropdown, setShowInviteDropdown] = useState(false)
@@ -98,40 +100,39 @@ export default function Dashboard() {
 
         setUser(session.user)
         
-        // Benutzerprofil mit company_id laden
+        // Benutzerprofil mit company_id laden (enthält auch is_super_admin/can_upload)
         try {
           const { data: profileData, error: profileError } = await supabase
             .from("profiles")
             .select("*") // Alle Profilfelder inkl. company_id
             .eq("id", session.user.id)
             .single()
-            
+
           if (profileError) {
             // Fehler beim Laden des Benutzerprofils
           } else if (profileData) {
             setUserProfile(profileData)
+            setIsSuperAdmin(profileData.is_super_admin || false)
+            setCanUpload(profileData.can_upload || false)
+
+            // Set default tab to admin for super admins
+            if (profileData.is_super_admin) {
+              setActiveTab('admin')
+            }
           }
         } catch (profileErr) {
           // Unerwarteter Fehler beim Laden des Profils
         }
-        
-        // Check if user is super admin
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('is_super_admin, can_upload')
-          .eq('id', session.user.id)
-          .single();
-        
-        setIsSuperAdmin(profile?.is_super_admin || false);
-        setCanUpload(profile?.can_upload || false);
-        
-        // Set default tab to admin for super admins
-        if (profile?.is_super_admin) {
-          setActiveTab('admin');
+
+        // Echte Firma des Benutzers auflösen (profiles.company_id) — NICHT den
+        // zuletzt im Login getippten localStorage-Wert anzeigen. Heilt zugleich
+        // veraltete localStorage-Einträge.
+        const company = await resolveUserCompany(supabase)
+        if (company) {
+          setCompanyName(company.name)
         }
-        
-        // Prüfen ob der Benutzer ein Admin ist
-        const company = getSavedCompany()
+
+        // Prüfen ob der Benutzer ein Admin seiner Firma ist
         if (company && company.id) {
           try {
             // Option 1: Versuchen über RLS
@@ -178,8 +179,10 @@ export default function Dashboard() {
   
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    localStorage.removeItem("selectedDomain")
-    localStorage.removeItem("selectedCompany")
+    // Korrekte Keys löschen (ecomtask_domain/ecomtask_company) — die früheren
+    // Keys "selectedDomain"/"selectedCompany" existierten nie, dadurch überlebte
+    // die Firmen-Auswahl jeden Logout.
+    clearCompanyData()
     router.push("/login")
   }
   
@@ -337,28 +340,28 @@ export default function Dashboard() {
             {/* Professioneller Header mit mehr Inhalt */}
             <div className="mx-auto max-w-7xl w-full mb-2 sm:mb-3 md:mb-4 mt-1.5 sm:mt-2 md:mt-3 px-1.5 sm:px-3 md:px-4 lg:px-8 flex-shrink-0">
               <div className="w-full border border-white/10 bg-[#1e1e1e] rounded-lg md:rounded-xl">
-                {/* Top Bar mit Logo und User */}
-                <div className="flex items-center justify-between gap-2 py-1.5 sm:py-2 md:py-1 px-2 sm:px-3 md:px-4 min-w-0">
+                {/* Top Bar mit Logo und User — links/rechts symmetrisch (flex-1 basis-0), damit der Chat exakt mittig sitzt */}
+                <div className="flex items-center justify-between gap-2 py-2 sm:py-2.5 md:py-3 px-2 sm:px-3 md:px-4 lg:px-5 min-w-0">
                   {/* Logo */}
-                  <div className="flex items-center flex-shrink-0">
+                  <div className="flex items-center md:flex-1 md:basis-0 min-w-0">
                     <button
                       onClick={() => setActiveTab('knowledge')}
-                      className="hover:opacity-80 transition-opacity mt-[1mm]"
+                      className="flex items-center gap-2 sm:gap-2.5 hover:opacity-80 transition-opacity"
                       title="Zur Wissensdatenbank"
                     >
-                      <Image
-                        src="/EcomTask.svg"
-                        alt="EcomTask Logo"
-                        width={180}
-                        height={68}
-                        className="w-[130px] h-auto sm:w-[150px] md:w-[150px] lg:w-[180px] -ml-1 sm:-ml-2 md:-ml-3"
-                        priority
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/wissensdatenbank-logo-v2.png"
+                        alt=""
+                        aria-hidden
+                        className="h-7 w-7 sm:h-8 sm:w-8 md:h-9 md:w-9 select-none"
+                        draggable={false}
                       />
                     </button>
                   </div>
 
                   {/* Agent Launcher - visible from md breakpoint */}
-                  <div className="hidden md:flex flex-1 justify-center items-center px-2">
+                  <div className="hidden md:flex shrink-0 justify-center items-center px-2">
                     <div className="w-[min(560px,50vw)] min-w-[200px]">
                       <KnowledgeAgentLauncher
                         userName={
@@ -370,7 +373,7 @@ export default function Dashboard() {
                   </div>
 
                   {/* Benutzer-Profil */}
-                  <div className="flex items-center justify-end gap-1 sm:gap-1.5 md:gap-2 flex-shrink-0 min-w-0">
+                  <div className="flex items-center justify-end gap-1 sm:gap-1.5 md:gap-2 md:flex-1 md:basis-0 min-w-0">
                     {isSuperAdmin && (
                       <button
                         onClick={() => setActiveTab('admin')}
@@ -383,9 +386,9 @@ export default function Dashboard() {
                     )}
                     <span
                       className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate max-w-[80px] sm:max-w-[100px] md:max-w-[160px] lg:max-w-[200px]"
-                      title={getSavedCompany()?.name ?? user?.email ?? undefined}
+                      title={companyName ?? userProfile?.full_name ?? user?.email ?? undefined}
                     >
-                      {getSavedCompany()?.name ??
+                      {companyName ??
                         userProfile?.full_name ??
                         (user as any)?.user_metadata?.full_name ??
                         user?.email ??
