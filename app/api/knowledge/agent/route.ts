@@ -1860,7 +1860,7 @@ async function executeTool(params: {
             `${s.name} ${s.description} ${(s.tags || []).join(" ")}`.toLowerCase().includes(q),
           )
         : items
-      return { skills: filtered, count: filtered.length }
+      return { result: { skills: filtered, count: filtered.length } } as ToolExecutionResult
     }
     case "create_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skill kann nicht angelegt werden.")
@@ -1883,14 +1883,16 @@ async function executeTool(params: {
         body: payload,
       })
       return {
-        created: true,
-        skill: data?.skill,
-        knowledge_base_id: kbId,
-        scope: kbId ? "datenbank" : "firmenweit",
-        next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
-        quality_check: data?.quality_check,
-        token_warnings: data?.token_warnings,
-      }
+        result: {
+          created: true,
+          skill: data?.skill,
+          knowledge_base_id: kbId,
+          scope: kbId ? "datenbank" : "firmenweit",
+          next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
+          quality_check: data?.quality_check,
+          token_warnings: data?.token_warnings,
+        },
+      } as ToolExecutionResult
     }
     case "update_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
@@ -1908,7 +1910,7 @@ async function executeTool(params: {
         userId,
         body: patch,
       })
-      return { updated: true, skill: data?.skill, token_warnings: data?.token_warnings }
+      return { result: { updated: true, skill: data?.skill, token_warnings: data?.token_warnings } } as ToolExecutionResult
     }
     case "assign_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
@@ -1922,7 +1924,7 @@ async function executeTool(params: {
         userId,
         body: { agent_config_id: mailConfigId, enabled: true },
       })
-      return { assigned: true, assignment: data }
+      return { result: { assigned: true, assignment: data } } as ToolExecutionResult
     }
     case "web_search": {
       const query = asString(args?.query, "query")
