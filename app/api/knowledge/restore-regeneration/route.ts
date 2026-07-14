@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getRouteAuth } from '@/lib/route-auth'
 
 // Sofortiger Rollback bei Webhook-Fehler.
 // Setzt is_pending_regeneration = false für die angegebenen Item-IDs,
@@ -18,10 +18,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    // Auth: RLS-gescopter Client — die company-isolierte UPDATE-Policy auf
+    // knowledge_items lässt nur eigene/Company-Items wiederherstellen.
+    const auth = await getRouteAuth(req)
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const supabase = auth.supabase
 
     let query = supabase
       .from('knowledge_items')

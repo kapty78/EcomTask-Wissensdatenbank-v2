@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getRouteAuth } from '@/lib/route-auth'
 
 // Markiert bestehende Fakten als "pending regeneration" (Soft-Delete).
 // Sie bleiben in der DB als Backup, bis der Cron sie bereinigt oder wiederherstellt.
@@ -17,10 +17,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    // Auth: RLS-gescopter Client — die company-isolierte UPDATE-Policy auf
+    // knowledge_items lässt nur eigene/Company-Items markieren.
+    const auth = await getRouteAuth(req)
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const supabase = auth.supabase
 
     const startedAt = new Date().toISOString()
     let query = supabase

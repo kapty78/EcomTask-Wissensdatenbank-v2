@@ -687,7 +687,13 @@ async function callInternalKnowledgeApi<T>(
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      // Vertrauenswürdiger Server-zu-Server-Aufruf: die Ziel-Route erlaubt
+      // damit den Zugriff ohne User-Session (siehe lib/kb-access.ts). Der
+      // API_SECRET_KEY ist ausschließlich serverseitig verfügbar.
+      ...(process.env.API_SECRET_KEY
+        ? { "x-internal-api-key": process.env.API_SECRET_KEY }
+        : {})
     },
     body: JSON.stringify(payload)
   })

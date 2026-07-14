@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { authorizeKbRequest } from '@/lib/kb-access'
 
 interface DocumentChunkRow {
   id: string
@@ -49,6 +50,10 @@ export async function POST(request: NextRequest) {
     if (chunkIdsToMerge.includes(primaryChunkId)) {
       return NextResponse.json({ error: 'primaryChunkId darf nicht in chunkIdsToMerge enthalten sein' }, { status: 400 })
     }
+
+    // Auth + Ownership: nur wer die KB besitzt/teilt, darf Chunks mergen/löschen.
+    const authz = await authorizeKbRequest(request, knowledgeBaseId)
+    if (!authz.ok) return authz.response
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

@@ -10,6 +10,7 @@ import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import Sigma from 'sigma'
 import Graph from 'graphology'
 import { Attributes } from 'graphology-types'
+import { apiFetch } from '@/lib/api-fetch'
 
 // Types basierend auf unserer API
 interface GraphNode {
@@ -99,7 +100,7 @@ export default function SigmaGraphVisualization({ knowledgeBaseId, onNodeSelect,
       // console.log('🔄 Lade Sigma.js Graph-Daten...')
       
       const url = `/api/knowledge/graph-data?knowledge_base_id=${knowledgeBaseId}&include_layout=true&min_similarity=0.3`
-      const response = await fetch(url)
+      const response = await apiFetch(url)
       
       if (!response.ok) {
         throw new Error(`API-Fehler: ${response.status} ${response.statusText}`)

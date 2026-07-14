@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getRouteAuth } from '@/lib/route-auth'
 
 // Wird nach erfolgreicher Fakten-Regenerierung aufgerufen.
 // Löscht die alten, als "pending" markierten Fakten endgültig.
@@ -14,10 +14,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    // Auth: RLS-gescopter Client stellt sicher, dass NUR eigene/Company-Items
+    // gelöscht werden (knowledge_items DELETE-Policy ist company-isoliert).
+    const auth = await getRouteAuth(req)
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const supabase = auth.supabase
 
     const { error } = await supabase
       .from('knowledge_items')

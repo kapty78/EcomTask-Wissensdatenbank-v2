@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient, createClient } from '@supabase/supabase-js'
+import { authorizeKbRequest } from '@/lib/kb-access'
 
 interface KnowledgeItem {
   id: string
@@ -72,7 +73,21 @@ export async function POST(request: NextRequest) {
     // Parse request body
     const body = await request.json()
     const { knowledgeBaseId, batchId, continueProcessing } = body
-    
+
+    // Auth + Ownership (bzw. vertrauenswürdiger interner Agent-Aufruf):
+    // kein unauth. Zugriff (OpenAI-Kosten!) und keine fremde KB.
+    let targetKbId: string | undefined = knowledgeBaseId
+    if (!targetKbId && continueProcessing && batchId) {
+      const { data: job } = await supabase
+        .from('mismatch_analysis_jobs')
+        .select('knowledge_base_id')
+        .eq('id', batchId)
+        .maybeSingle()
+      targetKbId = job?.knowledge_base_id ?? undefined
+    }
+    const authz = await authorizeKbRequest(request, targetKbId ?? [])
+    if (!authz.ok) return authz.response
+
     console.log('🔐 Using service role key for authentication')
     console.log('📋 Knowledge Base ID:', knowledgeBaseId)
     console.log('🔄 Batch ID:', batchId)

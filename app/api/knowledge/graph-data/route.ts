@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import { authorizeKbRequest } from '@/lib/kb-access'
 
 // Vereinfachte Teaser-Funktion
 function getTeaser(content: string, maxWords: number): string {
@@ -22,6 +23,10 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    // Auth + Ownership: nur wer die KB (als Owner/Company) sehen darf, kommt rein.
+    const authz = await authorizeKbRequest(request, knowledgeBaseId)
+    if (!authz.ok) return authz.response
 
     // Supabase Client mit Service Key
     const supabase = createClient(

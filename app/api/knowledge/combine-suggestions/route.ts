@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { authorizeKbRequest } from '@/lib/kb-access'
 
 interface KnowledgeItemRow {
   id: string
@@ -133,7 +134,12 @@ export async function POST(request: NextRequest) {
     if (!knowledgeBaseId) {
       return NextResponse.json({ error: 'knowledgeBaseId ist erforderlich' }, { status: 400 })
     }
-    
+
+    // Auth + Ownership: verhindert unauth. Aufrufe (u.a. OpenAI-Kosten-Missbrauch)
+    // und Zugriff auf fremde KB.
+    const authz = await authorizeKbRequest(request, knowledgeBaseId)
+    if (!authz.ok) return authz.response
+
     console.log('[combine-suggestions] Started analysis at:', new Date().toISOString())
 
     const supabase = createClient(
