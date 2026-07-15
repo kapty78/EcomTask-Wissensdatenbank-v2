@@ -168,16 +168,22 @@ export default function Login() {
     try {
       const fullDomain = `${name}${DOMAIN_SUFFIX}`
 
-      // Domain gegen die companies-Tabelle validieren
-      const { data: companyData, error: companyError } = await supabase
-        .from("companies")
-        .select("id, name, domain")
-        .or(`domain.eq.${fullDomain},domain.eq.${name}`)
-        .maybeSingle()
+      // Domain über SECURITY-DEFINER-RPC prüfen. Seit dem Tenant-Lockdown
+      // (Migrationen 003/004) ist companies NICHT mehr unauthentifiziert per
+      // SELECT lesbar — der Pre-Login-Schritt läuft ausschließlich über
+      // lookup_company_by_domain (Migration 005), das nur die für den Login
+      // nötigen Felder zurückgibt und keine Enumeration erlaubt.
+      const { data: lookupRows, error: companyError } = await supabase.rpc(
+        "lookup_company_by_domain",
+        { p_full_domain: fullDomain, p_short_name: name }
+      )
 
       if (companyError) {
         throw new Error(`Fehler bei der Accountprüfung: ${companyError.message}`)
       }
+
+      // Die RPC liefert eine Ergebnismenge (TABLE) → erste Zeile verwenden.
+      const companyData = Array.isArray(lookupRows) ? lookupRows[0] : lookupRows
 
       if (!companyData) {
         setError(
