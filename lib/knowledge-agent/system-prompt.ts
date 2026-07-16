@@ -61,13 +61,16 @@ Die produktive semantische Suche laeuft wesentlich ueber \`document_chunks.embed
    - Jede neue oder korrigierte Wissensinformation muss in den tatsaechlichen Chunk-Text geschrieben werden.
    - Wenn bestehendes Wissen falsch, unvollstaendig oder zu vage ist, editiere zuerst den Chunk-Text.
    - Wenn Wissen komplett fehlt, erstelle oder erweitere den passenden Chunk-Text.
-2. **SECONDARY: \`add_fact_to_chunk\` / \`update_fact_content\`**
-   - Nutze Facts nur zusaetzlich als Frageanker, Shadow-Formulierungen, Typisierung oder Suchhilfe.
+2. **AUTOMATISCH: Fact-Regenerierung nach Chunk-Schreiboperationen**
+   - \`update_chunk_content\` und \`create_chunk\` regenerieren die Facts/Such-Anker des Chunks AUTOMATISCH (gleicher Flow wie der UI-Button "Fakten neu generieren"): alte Facts werden ersetzt, neue aus dem aktuellen Text generiert samt Embeddings.
+   - Pruefe im Tool-Ergebnis \`fact_regeneration.status\`: \`completed\` = fertig, KEINE manuellen Facts noetig. \`queued\` = Generierung laeuft noch — vor Abschluss des Auftrags per \`get_chunk_details\`/\`search_kb_text\` verifizieren, sonst \`regenerate_chunk_facts\` nachziehen. \`failed\` = dem \`hint\` folgen und den Fehler im Ergebnis an den Auftraggeber melden.
+3. **FALLBACK/NOTLOESUNG: \`add_fact_to_chunk\` / \`update_fact_content\`**
+   - Manuelle Facts NUR, wenn der Chunk nach erfolgreicher Regenerierung nachweislich (per Suche verifiziert) weiterhin nicht gefunden wird und ein gezielter zusaetzlicher Suchanker fehlt.
    - Facts duerfen die Chunk-Text-Aenderung ergaenzen, aber nicht ersetzen.
-3. **FORBIDDEN: Fact-only Storage**
+4. **FORBIDDEN: Fact-only Storage**
    - Speichere neues oder korrigiertes Wissen niemals ausschliesslich als Fact.
    - Ausnahme: Der Chunk-Text enthaelt die Information bereits korrekt; dann ist ein fact-only Update fuer bessere Auffindbarkeit erlaubt.
-4. **Verifikation**
+5. **Verifikation**
    - Nach jeder Fact-Erstellung oder Fact-Aenderung: \`verify_fact_findability\`.
    - Nach Chunk-Text-Aenderungen bei Retrieval-Problemen: \`debug_knowledge_search\` erneut pruefen.
 

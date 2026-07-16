@@ -12,6 +12,7 @@ import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
 import { findOverlappingChunks } from "@/lib/knowledge-agent/chunk-overlap"
+import { runChunkFactRegeneration } from "@/lib/knowledge-agent/fact-regeneration"
 import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
 import { generateFragenprompt } from "@/lib/knowledge-agent/question-prompt"
 import { processDocument } from "@/lib/cursor-documents/processing"
@@ -3112,7 +3113,7 @@ async function executeTool(params: {
 
       const { data: document, error: docError } = await authClient
         .from("documents")
-        .select("id, title, file_name")
+        .select("id, title, file_name, file_type, file_size, storage_url, workspace_id, company_id")
         .eq("id", documentId)
         .single()
 
@@ -3211,11 +3212,27 @@ async function executeTool(params: {
         throw new Error(`Chunk konnte nicht erstellt werden: ${chunkError?.message || "unbekannt"}`)
       }
 
+      // Neuer Chunk ⇒ Facts (Such-Anker + Embeddings) sofort generieren,
+      // sonst ist der Chunk für das Fact-basierte Retrieval unsichtbar.
+      const factRegeneration = await runChunkFactRegeneration({
+        serviceClient,
+        chunk: {
+          id: createdChunk.id,
+          content,
+          content_position: createdChunk.content_position,
+          document_id: createdChunk.document_id
+        },
+        document,
+        knowledgeBaseId: resolvedKbId,
+        userId
+      })
+
       return {
         result: {
           success: true,
           knowledge_base_id: resolvedKbId,
-          chunk: createdChunk
+          chunk: createdChunk,
+          fact_regeneration: factRegeneration
         }
       } as ToolExecutionResult
     }
@@ -3388,7 +3405,7 @@ async function executeTool(params: {
         throw new Error("Der neue Chunk-Inhalt ist zu kurz.")
       }
 
-      const { chunk } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
+      const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
       const { data: updatedChunk, error: updateError } = await serviceClient
         .from("document_chunks")
         .update({
@@ -3406,11 +3423,28 @@ async function executeTool(params: {
         throw new Error(`Chunk konnte nicht aktualisiert werden: ${updateError?.message || "unbekannt"}`)
       }
 
+      // Geänderter Chunk-Text ⇒ Facts (Such-Anker + Embeddings) automatisch
+      // neu generieren, sonst findet das Retrieval weiterhin nur den alten
+      // Stand. Gleicher Flow wie der UI-Button "Fakten neu generieren".
+      const factRegeneration = await runChunkFactRegeneration({
+        serviceClient,
+        chunk: {
+          id: chunk.id,
+          content,
+          content_position: chunk.content_position,
+          document_id: chunk.document_id
+        },
+        document,
+        knowledgeBaseId: resolvedKbId,
+        userId
+      })
+
       return {
         result: {
           success: true,
           knowledge_base_id: resolvedKbId,
-          chunk: updatedChunk
+          chunk: updatedChunk,
+          fact_regeneration: factRegeneration
         }
       } as ToolExecutionResult
     }
@@ -3641,60 +3675,35 @@ async function executeTool(params: {
     case "regenerate_chunk_facts": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
       const chunkId = asString(args?.chunk_id, "chunk_id")
+      const customPrompt = asOptionalString(args?.custom_prompt)
       const { chunk, document } = await getChunkAndDocument(authClient, chunkId, resolvedKbId)
 
-      const webhookUrl = process.env.N8N_WEBHOOK_URL_FACTS
-      if (!webhookUrl) {
-        throw new Error("N8N_WEBHOOK_URL_FACTS ist nicht konfiguriert.")
-      }
-
-      const payload = {
-        document: {
-          id: document.id,
-          title: document.title || document.file_name || null,
-          file_name: document.file_name || null,
-          file_type: document.file_type || null,
-          file_size: document.file_size || null,
-          storage_url: document.storage_url || null,
-          workspace_id: document.workspace_id || null,
-          company_id: document.company_id || defaultCompanyId || null,
-          knowledge_base_id: resolvedKbId,
-          user_id: userId
-        },
+      // Vollständiger Regenerations-Flow (mark → Webhook → Poll → Cleanup),
+      // identisch zum UI-Button. Ersetzt den früheren Fire-and-forget-Aufruf,
+      // der alte Facts als Duplikate neben den neuen stehen ließ.
+      const factRegeneration = await runChunkFactRegeneration({
+        serviceClient,
         chunk: {
           id: chunk.id,
           content: chunk.content,
-          position: chunk.content_position,
-          regenerate_facts: true
+          content_position: chunk.content_position,
+          document_id: chunk.document_id
         },
-        options: {
-          language: "de",
-          max_facts_per_chunk: 20,
-          create_embeddings: true,
-          embedding_provider: "openai",
-          source_type: "regenerate_facts",
-          knowledge_base_id: resolvedKbId
-        }
-      }
-
-      const webhookResponse = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        document: {
+          ...document,
+          company_id: document.company_id || defaultCompanyId || null
+        },
+        knowledgeBaseId: resolvedKbId,
+        userId,
+        customPrompt
       })
-
-      if (!webhookResponse.ok) {
-        const errorBody = await webhookResponse.text()
-        throw new Error(`Webhook-Fehler (${webhookResponse.status}): ${clip(errorBody, 160)}`)
-      }
 
       return {
         result: {
-          success: true,
-          queued: true,
+          success: factRegeneration.status !== "failed",
           chunk_id: chunk.id,
           knowledge_base_id: resolvedKbId,
-          status: webhookResponse.status
+          fact_regeneration: factRegeneration
         }
       } as ToolExecutionResult
     }

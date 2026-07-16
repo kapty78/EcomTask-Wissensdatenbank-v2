@@ -222,7 +222,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     type: "function",
     function: {
       name: "create_chunk",
-      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument. PFLICHT VORHER (wie bei Skills): search_kb_text mit Fall- UND Kategorie-Begriff (beide im queries-Array EINES Aufrufs) — existiert ein Chunk zur selben Kategorie, diesen via update_chunk_content ERWEITERN statt einen Parallel-Chunk zu streuen. Neue Chunks auf KATEGORIE-Ebene formulieren (der ausloesende Einzelfall ist Beispiel/Unterabschnitt, nicht das Thema). Hat einen Ueberlappungs-Guard: meldet er duplicate_suspects, den genannten Chunk erweitern statt force_create zu setzen.",
+      description: "Erstellt einen neuen Chunk in einem vorhandenen Dokument. PFLICHT VORHER (wie bei Skills): search_kb_text mit Fall- UND Kategorie-Begriff (beide im queries-Array EINES Aufrufs) — existiert ein Chunk zur selben Kategorie, diesen via update_chunk_content ERWEITERN statt einen Parallel-Chunk zu streuen. Neue Chunks auf KATEGORIE-Ebene formulieren (der ausloesende Einzelfall ist Beispiel/Unterabschnitt, nicht das Thema). Hat einen Ueberlappungs-Guard: meldet er duplicate_suspects, den genannten Chunk erweitern statt force_create zu setzen. Generiert nach dem Anlegen AUTOMATISCH die Facts/Such-Anker (Ergebnis in fact_regeneration) — keine manuellen add_fact_to_chunk-Aufrufe nötig, außer fact_regeneration meldet queued/failed.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -257,7 +257,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     function: {
       name: "add_fact_to_chunk",
       description:
-        "SECONDARY/SUPPLEMENTAL: Fügt einem Chunk einen neuen Fakt bzw. Frageanker hinzu und erzeugt ein Embedding. Nicht als primären Speicher für neues Wissen verwenden: neue oder korrigierte Knowledge muss zuerst im Chunk-Text stehen bzw. per update_chunk_content ergänzt werden. Fact-only ist nur ok, wenn der Chunk-Text die Information bereits korrekt enthält und der Fakt nur die Auffindbarkeit verbessert.",
+        "NOTLÖSUNG/FALLBACK: Fügt einem Chunk einen einzelnen manuellen Fakt bzw. Frageanker hinzu. NICHT der Normalweg — update_chunk_content und create_chunk regenerieren Facts automatisch. Nur einsetzen, wenn der Chunk trotz erfolgreicher Regenerierung nachweislich (per Suche verifiziert) nicht gefunden wird und ein gezielter zusätzlicher Suchanker fehlt. Die Information muss bereits im Chunk-Text stehen.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -371,7 +371,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     function: {
       name: "update_chunk_content",
       description:
-        "PRIMARY für Knowledge-Updates: Ändert den tatsächlichen Chunk-Text, auf dem Chunk-Embeddings und semantische Suche basieren. Nutze dieses Tool zuerst, wenn Wissen neu, falsch, unvollständig oder zu vage ist. Facts sind danach nur sekundäre Ergänzungen.",
+        "PRIMARY für Knowledge-Updates: Ändert den tatsächlichen Chunk-Text, auf dem Chunk-Embeddings und semantische Suche basieren. Nutze dieses Tool zuerst, wenn Wissen neu, falsch, unvollständig oder zu vage ist. Regeneriert danach AUTOMATISCH alle Facts/Such-Anker des Chunks (alte werden ersetzt) — das Ergebnis steht in fact_regeneration. Bei status=completed sind KEINE manuellen add_fact_to_chunk-Aufrufe nötig; nur bei status=queued/failed dem hint folgen.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -566,7 +566,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     function: {
       name: "regenerate_chunk_facts",
       description:
-        "SECONDARY/SUPPLEMENTAL: Startet die Fakten-Regenerierung für einen Chunk über den n8n-Workflow. Nur sinnvoll, wenn der primäre Chunk-Text bereits korrekt und vollständig ist; neue Knowledge vorher per update_chunk_content oder create_chunk in den Chunk-Text schreiben.",
+        "Regeneriert alle Facts/Such-Anker eines Chunks aus dessen aktuellem Text (gleicher Flow wie der UI-Button: alte Facts werden als Backup markiert, neue generiert, bei Erfolg die alten ersetzt). Wartet begrenzt auf das Ergebnis (fact_regeneration.status: completed/queued/failed). Normalerweise NICHT nötig nach update_chunk_content/create_chunk — die regenerieren automatisch. Einsetzen bei status=queued/failed-Nachläufen oder wenn Facts nachweislich veraltet sind, ohne dass sich der Chunk-Text ändern muss.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -578,6 +578,10 @@ export const KNOWLEDGE_AGENT_TOOLS = [
           chunk_id: {
             type: "string",
             description: "UUID des Chunks."
+          },
+          custom_prompt: {
+            type: "string",
+            description: "Optional: zusätzliche Anweisung für die Fact-Extraktion (z. B. Fokus auf bestimmte Begriffe/Anliegen)."
           }
         },
         required: ["chunk_id"]
