@@ -7,6 +7,7 @@ interface AdminUserSearchProps {
   onSearchChange: (value: string) => void;
   resultCount: number;
   totalCount: number;
+  placeholder?: string;
 }
 
 export default function AdminUserSearch({
@@ -14,13 +15,14 @@ export default function AdminUserSearch({
   onSearchChange,
   resultCount,
   totalCount,
+  placeholder = 'Benutzer suchen (Name, Email, Unternehmen)…',
 }: AdminUserSearchProps) {
   return (
     <div className="group relative">
       <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary" />
       <input
         type="text"
-        placeholder="Benutzer suchen (Name, Email, Unternehmen)…"
+        placeholder={placeholder}
         value={searchTerm}
         onChange={(e) => onSearchChange(e.target.value)}
         className="w-full rounded-xl border border-white/[0.08] bg-[#1d1d1d] py-2.5 pl-10 pr-20 text-sm text-white outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/40 focus:ring-2 focus:ring-primary/15"

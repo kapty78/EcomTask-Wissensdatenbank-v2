@@ -1,6 +1,7 @@
 "use client"
 
-import { AlertTriangle, ShieldCheck } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { AlertTriangle, ShieldCheck, ArrowLeft, Building2 } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
 import { UserPermission } from './types';
 import { useAdminUsers } from './hooks/useAdminUsers';
@@ -11,9 +12,64 @@ import AdminUserSearch from './AdminUserSearch';
 import AdminUserTable from './AdminUserTable';
 import AdminUserCardList from './AdminUserCardList';
 import AdminUserDetailSheet from './AdminUserDetailSheet';
+import AdminCompanyGallery, { CompanyGroup, companyMonogram } from './AdminCompanyGallery';
 
 interface AdminPanelProps {
   user: User;
+}
+
+const NONE_KEY = '__none__';
+
+/** Stabiler Gruppenschlüssel: company_id, sonst der Name, sonst „ohne Firma". */
+function companyKeyOf(u: UserPermission): string {
+  if (u.company_id) return u.company_id;
+  if (u.company_name) return `name:${u.company_name}`;
+  return NONE_KEY;
+}
+
+/** Nutzer nach Unternehmen bündeln (inkl. Aktiv-/Admin-/Lösungs-Aggregat). */
+function buildCompanyGroups(list: UserPermission[]): CompanyGroup[] {
+  const map = new Map<string, CompanyGroup>();
+
+  for (const u of list) {
+    const key = companyKeyOf(u);
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        id: key,
+        name: u.company_name || 'Ohne Unternehmen',
+        users: [],
+        activeCount: 0,
+        adminCount: 0,
+        solutions: [],
+        hasCompany: Boolean(u.company_name),
+      };
+      map.set(key, group);
+    }
+    group.users.push(u);
+    if (u.can_upload) group.activeCount += 1;
+    if (u.is_super_admin) group.adminCount += 1;
+  }
+
+  for (const group of map.values()) {
+    const set = new Set<string>();
+    for (const u of group.users) {
+      const flags = u.solution_flags;
+      if (!flags) continue;
+      if (flags.chatbot) set.add('Chatbot');
+      if (flags.phone) set.add('Phone');
+      if (flags.mail) set.add('Mail');
+      if (flags.assistant) set.add('Assistant');
+      if (flags.follow_up) set.add('Follow-up');
+    }
+    group.solutions = Array.from(set);
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.hasCompany !== b.hasCompany) return a.hasCompany ? -1 : 1;
+    if (b.users.length !== a.users.length) return b.users.length - a.users.length;
+    return a.name.localeCompare(b.name, 'de');
+  });
 }
 
 export default function AdminPanel({ user }: AdminPanelProps) {
@@ -41,6 +97,32 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     applySolutionFlagsUpdate,
     setError,
   });
+
+  // Ebene 1 = Firmen-Galerie, Ebene 2 = Nutzer der gewählten Firma.
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+
+  const companyGroups = useMemo(() => buildCompanyGroups(filteredUsers), [filteredUsers]);
+  const totalCompanies = useMemo(() => buildCompanyGroups(users).length, [users]);
+
+  const companyUsers = useMemo(
+    () =>
+      selectedCompanyId
+        ? filteredUsers.filter((u) => companyKeyOf(u) === selectedCompanyId)
+        : [],
+    [filteredUsers, selectedCompanyId],
+  );
+
+  // Firmen-Kopf stabil aus allen Nutzern ableiten (bleibt auch bei leerer Suche).
+  const selectedCompany = useMemo(() => {
+    if (!selectedCompanyId) return null;
+    const match = users.find((u) => companyKeyOf(u) === selectedCompanyId);
+    const total = users.filter((u) => companyKeyOf(u) === selectedCompanyId).length;
+    return {
+      name: match?.company_name || 'Ohne Unternehmen',
+      hasCompany: Boolean(match?.company_name),
+      total,
+    };
+  }, [users, selectedCompanyId]);
 
   const handleSelectUser = (u: UserPermission) => {
     setSelectedUser(u);
@@ -78,29 +160,73 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     );
   }
 
+  const inCompanyView = Boolean(selectedCompanyId && selectedCompany);
+
   return (
     <div className="space-y-4 px-1.5 pb-4 sm:px-3 md:px-4 lg:px-8">
-      {/* Kopfbereich: Identität des Panels + Suche */}
+      {/* Kopfbereich: Panel-Identität ODER Firmen-Kopf mit Zurück-Button */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 flex-shrink-0 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/20">
-            <ShieldCheck className="size-5" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold leading-tight text-white sm:text-lg">
-              Benutzerverwaltung
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              Berechtigungen, Limits &amp; Lösungen zentral steuern
-            </p>
+        {inCompanyView && selectedCompany ? (
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSelectedCompanyId(null)}
+              className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
+            >
+              <ArrowLeft className="size-3.5" />
+              Unternehmen
+            </button>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span
+                className={
+                  selectedCompany.hasCompany
+                    ? 'grid size-9 flex-shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary/30 to-primary/[0.06] text-xs font-bold text-primary ring-1 ring-inset ring-white/10'
+                    : 'grid size-9 flex-shrink-0 place-items-center rounded-xl bg-white/[0.05] text-muted-foreground ring-1 ring-inset ring-white/10'
+                }
+              >
+                {selectedCompany.hasCompany ? (
+                  companyMonogram(selectedCompany.name)
+                ) : (
+                  <Building2 className="size-4" />
+                )}
+              </span>
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold leading-tight text-white sm:text-lg">
+                  {selectedCompany.name}
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  {selectedCompany.total} {selectedCompany.total === 1 ? 'Nutzer' : 'Nutzer'}
+                </p>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 flex-shrink-0 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/20">
+              <ShieldCheck className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold leading-tight text-white sm:text-lg">
+                Unternehmen
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Unternehmen wählen, um Nutzer &amp; Berechtigungen zu verwalten
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="w-full sm:w-72 md:w-80">
           <AdminUserSearch
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
-            resultCount={filteredUsers.length}
-            totalCount={users.length}
+            resultCount={inCompanyView ? companyUsers.length : companyGroups.length}
+            totalCount={inCompanyView ? selectedCompany?.total ?? 0 : totalCompanies}
+            placeholder={
+              inCompanyView
+                ? `In ${selectedCompany?.name ?? 'Unternehmen'} suchen…`
+                : 'Unternehmen oder Nutzer suchen…'
+            }
           />
         </div>
       </header>
@@ -113,30 +239,43 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         </div>
       )}
 
-      {/* Stats */}
-      <AdminStatsGrid stats={stats} userCount={users.length} />
+      {inCompanyView ? (
+        <>
+          {/* Desktop Table (Nutzer der Firma) */}
+          <div className="hidden md:block">
+            <AdminUserTable
+              users={companyUsers}
+              searchTerm={searchTerm}
+              totalCount={selectedCompany?.total ?? 0}
+              isUpdateLoading={mutations.isUpdateLoading}
+              onSelectUser={handleSelectUser}
+              onToggleUpload={mutations.updateUploadPermission}
+            />
+          </div>
 
-      {/* Desktop Table */}
-      <div className="hidden md:block">
-        <AdminUserTable
-          users={filteredUsers}
-          searchTerm={searchTerm}
-          totalCount={users.length}
-          isUpdateLoading={mutations.isUpdateLoading}
-          onSelectUser={handleSelectUser}
-          onToggleUpload={mutations.updateUploadPermission}
-        />
-      </div>
+          {/* Mobile Card List */}
+          <div className="block md:hidden">
+            <AdminUserCardList
+              users={companyUsers}
+              searchTerm={searchTerm}
+              totalCount={selectedCompany?.total ?? 0}
+              onSelectUser={handleSelectUser}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Globale Übersicht */}
+          <AdminStatsGrid stats={stats} userCount={users.length} />
 
-      {/* Mobile Card List */}
-      <div className="block md:hidden">
-        <AdminUserCardList
-          users={filteredUsers}
-          searchTerm={searchTerm}
-          totalCount={users.length}
-          onSelectUser={handleSelectUser}
-        />
-      </div>
+          {/* Firmen-Galerie (Kacheln) */}
+          <AdminCompanyGallery
+            companies={companyGroups}
+            searchTerm={searchTerm}
+            onSelectCompany={setSelectedCompanyId}
+          />
+        </>
+      )}
 
       {/* Detail Sheet */}
       <AdminUserDetailSheet
