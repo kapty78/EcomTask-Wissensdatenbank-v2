@@ -19,8 +19,10 @@ export default function AdminUserCardList({
 }: AdminUserCardListProps) {
   if (users.length === 0 && searchTerm) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 bg-[#1e1e1e] p-6 text-center">
-        <Search className="mx-auto mb-2 size-8 text-muted-foreground opacity-50" />
+      <div className="rounded-2xl border border-dashed border-white/10 bg-[#1d1d1d] p-8 text-center">
+        <div className="mx-auto mb-2.5 grid size-10 place-items-center rounded-xl bg-white/[0.04]">
+          <Search className="size-5 text-muted-foreground opacity-70" />
+        </div>
         <p className="text-sm text-muted-foreground">
           Keine Benutzer für &quot;{searchTerm}&quot; gefunden.
         </p>
@@ -30,8 +32,10 @@ export default function AdminUserCardList({
 
   if (totalCount === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 bg-[#1e1e1e] p-6 text-center">
-        <Users className="mx-auto mb-2 size-8 text-muted-foreground opacity-50" />
+      <div className="rounded-2xl border border-dashed border-white/10 bg-[#1d1d1d] p-8 text-center">
+        <div className="mx-auto mb-2.5 grid size-10 place-items-center rounded-xl bg-white/[0.04]">
+          <Users className="size-5 text-muted-foreground opacity-70" />
+        </div>
         <p className="text-sm text-muted-foreground">Keine Benutzer gefunden.</p>
       </div>
     );
@@ -52,51 +56,64 @@ export default function AdminUserCardList({
   return (
     <div className="space-y-2">
       {users.map((user) => {
-        const initial = user.full_name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || 'U';
+        const initial =
+          user.full_name?.charAt(0)?.toUpperCase() ||
+          user.email?.charAt(0)?.toUpperCase() ||
+          'U';
         const activeSolutions = getActiveSolutions(user);
 
         return (
           <button
             key={user.user_id}
             onClick={() => onSelectUser(user)}
-            className="w-full rounded-xl border border-white/10 bg-[#1e1e1e] p-3 text-left transition-colors hover:border-white/20 active:bg-white/5"
+            className="w-full rounded-2xl border border-white/[0.07] bg-[#1d1d1d] p-3 text-left transition-all hover:border-primary/20 active:scale-[0.99]"
           >
             <div className="flex items-center gap-3">
-              <div className="size-10 rounded-full bg-white/10 flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
+              <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-primary/[0.06] text-sm font-semibold text-primary ring-1 ring-inset ring-white/10">
                 {initial}
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-white truncate">
+                  <p className="truncate text-sm font-medium text-white">
                     {user.full_name || 'Unbekannt'}
                   </p>
-                  {user.is_super_admin && <Shield className="size-3 text-primary flex-shrink-0" />}
+                  {user.is_super_admin && (
+                    <Shield className="size-3 flex-shrink-0 text-primary" />
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                <p className="truncate text-xs text-muted-foreground">{user.email}</p>
                 {user.company_name && (
-                  <p className="text-xs text-muted-foreground/70 truncate mt-0.5">{user.company_name}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground/70">
+                    {user.company_name}
+                  </p>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex flex-shrink-0 items-center gap-2">
                 {user.can_upload ? (
-                  <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10 text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="border-primary/30 bg-primary/10 text-[10px] text-primary"
+                  >
                     Aktiv
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="border-white/10 text-[10px] text-muted-foreground"
+                  >
                     Wartend
                   </Badge>
                 )}
-                <ChevronRight className="size-4 text-muted-foreground" />
+                <ChevronRight className="size-4 text-muted-foreground/50" />
               </div>
             </div>
             {activeSolutions.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2 pl-[52px]">
+              <div className="mt-2 flex flex-wrap gap-1 pl-[52px]">
                 {activeSolutions.map((label) => (
                   <Badge
                     key={label}
                     variant="outline"
-                    className="border-primary/30 text-primary bg-primary/10 text-[10px]"
+                    className="border-white/10 bg-white/[0.03] text-[10px] text-muted-foreground"
                   >
                     {label}
                   </Badge>

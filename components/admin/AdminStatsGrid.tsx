@@ -1,6 +1,7 @@
 "use client"
 
 import { Users, Shield, Database, Settings, FileText, Activity } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { GlobalStats } from './types';
 
 interface AdminStatsGridProps {
@@ -9,7 +10,7 @@ interface AdminStatsGridProps {
 }
 
 const statCards = [
-  { key: 'totalUsers', label: 'Gesamt Benutzer', icon: Users, fallbackKey: 'userCount' },
+  { key: 'totalUsers', label: 'Gesamt Benutzer', icon: Users, fallbackKey: 'userCount', accent: true },
   { key: 'totalSuperAdmins', label: 'Super Admins', icon: Shield },
   { key: 'totalKnowledgeBases', label: 'Knowledge Bases', icon: Database },
   { key: 'totalProcessLogs', label: 'Process Logs', icon: Settings, format: true },
@@ -24,25 +25,41 @@ export default function AdminStatsGrid({ stats, userCount }: AdminStatsGridProps
       return 0;
     }
     const val = (stats as any)[card.key] ?? 0;
-    return card.format ? val.toLocaleString() : val;
+    const shouldFormat = 'format' in card && card.format;
+    return shouldFormat ? val.toLocaleString('de-DE') : val;
   };
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 sm:gap-3 lg:grid-cols-6">
       {statCards.map((card) => {
         const Icon = card.icon;
+        const isAccent = 'accent' in card && card.accent;
         return (
           <div
             key={card.key}
-            className="rounded-xl border border-white/10 bg-[#1e1e1e] p-4 transition-colors hover:border-white/20"
+            className="group relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#1d1d1d] p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/20 sm:p-4"
           >
-            <div className="flex items-center gap-2 mb-2">
-              <div className="rounded-lg bg-white/5 p-1.5">
-                <Icon className="size-3.5 text-muted-foreground" />
-              </div>
-              <span className="text-xs text-muted-foreground truncate">{card.label}</span>
+            {/* obere Lichtkante — flache Boxen bekommen so Tiefe */}
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+            {isAccent && (
+              <span className="pointer-events-none absolute -right-6 -top-6 size-16 rounded-full bg-primary/20 blur-2xl" />
+            )}
+            <div className="relative mb-2.5 flex items-center gap-2">
+              <span
+                className={cn(
+                  'grid size-7 shrink-0 place-items-center rounded-lg transition-colors',
+                  isAccent
+                    ? 'bg-primary/15 text-primary ring-1 ring-primary/25'
+                    : 'bg-white/5 text-muted-foreground group-hover:text-foreground',
+                )}
+              >
+                <Icon className="size-3.5" />
+              </span>
+              <span className="truncate text-[11px] font-medium text-muted-foreground">{card.label}</span>
             </div>
-            <p className="text-2xl font-bold text-white">{getValue(card)}</p>
+            <p className="relative text-2xl font-semibold tracking-tight text-white tabular-nums">
+              {getValue(card)}
+            </p>
           </div>
         );
       })}

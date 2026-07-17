@@ -43,7 +43,7 @@ export default function UserKnowledgeBases({ user }: UserKnowledgeBasesProps) {
               title="ID kopieren"
             >
               {copiedId === kb.id ? (
-                <Check className="size-3.5 text-emerald-400" />
+                <Check className="size-3.5 text-primary" />
               ) : (
                 <Copy className="size-3.5" />
               )}

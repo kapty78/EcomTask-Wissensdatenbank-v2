@@ -1,9 +1,8 @@
 "use client"
 
-import { Shield, Search, Users } from 'lucide-react';
+import { Shield, Search, Users, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { UserPermission, SolutionFlagKey } from './types';
+import { UserPermission } from './types';
 
 interface AdminUserTableProps {
   users: UserPermission[];
@@ -13,6 +12,9 @@ interface AdminUserTableProps {
   onSelectUser: (user: UserPermission) => void;
   onToggleUpload: (userId: string, canUpload: boolean) => void;
 }
+
+const TH =
+  'px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70';
 
 export default function AdminUserTable({
   users,
@@ -24,11 +26,13 @@ export default function AdminUserTable({
 }: AdminUserTableProps) {
   if (users.length === 0 && searchTerm) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 bg-[#1e1e1e] p-8 text-center">
-        <Search className="mx-auto mb-3 size-10 text-muted-foreground opacity-50" />
+      <div className="rounded-2xl border border-dashed border-white/10 bg-[#1d1d1d] p-10 text-center">
+        <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-white/[0.04]">
+          <Search className="size-6 text-muted-foreground opacity-70" />
+        </div>
         <h3 className="mb-1 text-sm font-medium text-white">Keine Benutzer gefunden</h3>
         <p className="text-xs text-muted-foreground">
-          Keine Benutzer entsprechen Ihrer Suche nach &quot;{searchTerm}&quot;.
+          Keine Benutzer entsprechen der Suche nach &quot;{searchTerm}&quot;.
         </p>
       </div>
     );
@@ -36,8 +40,10 @@ export default function AdminUserTable({
 
   if (totalCount === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 bg-[#1e1e1e] p-8 text-center">
-        <Users className="mx-auto mb-3 size-10 text-muted-foreground opacity-50" />
+      <div className="rounded-2xl border border-dashed border-white/10 bg-[#1d1d1d] p-10 text-center">
+        <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-white/[0.04]">
+          <Users className="size-6 text-muted-foreground opacity-70" />
+        </div>
         <h3 className="mb-1 text-sm font-medium text-white">Keine Benutzer</h3>
         <p className="text-xs text-muted-foreground">Es wurden keine Benutzer gefunden.</p>
       </div>
@@ -57,56 +63,47 @@ export default function AdminUserTable({
   };
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#1e1e1e] overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#1d1d1d] shadow-[0_8px_28px_-20px_rgba(0,0,0,0.8)]">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[700px]">
+        <table className="w-full min-w-[720px] border-separate border-spacing-0">
           <thead>
-            <tr className="border-b border-white/10">
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Benutzer
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">
-                Unternehmen
-              </th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider hidden lg:table-cell">
-                Limits
-              </th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider hidden xl:table-cell">
-                Lösungen
-              </th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Aktionen
-              </th>
+            <tr className="bg-white/[0.02]">
+              <th className={`${TH} text-left`}>Benutzer</th>
+              <th className={`${TH} hidden text-left md:table-cell`}>Unternehmen</th>
+              <th className={`${TH} text-center`}>Status</th>
+              <th className={`${TH} hidden text-center lg:table-cell`}>Limits</th>
+              <th className={`${TH} hidden text-center xl:table-cell`}>Lösungen</th>
+              <th className={`${TH} text-right`}>Aktionen</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody>
             {users.map((user) => {
               const activeSolutions = getActiveSolutions(user);
-              const initial = user.full_name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || 'U';
+              const initial =
+                user.full_name?.charAt(0)?.toUpperCase() ||
+                user.email?.charAt(0)?.toUpperCase() ||
+                'U';
 
               return (
                 <tr
                   key={user.user_id}
-                  className="hover:bg-white/[0.03] transition-colors cursor-pointer"
+                  className="group cursor-pointer border-t border-white/[0.05] transition-colors hover:bg-primary/[0.04]"
                   onClick={() => onSelectUser(user)}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className="size-8 rounded-full bg-white/10 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+                      <div className="flex size-9 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-primary/[0.06] text-sm font-semibold text-primary ring-1 ring-inset ring-white/10">
                         {initial}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-white truncate">
+                        <p className="truncate text-sm font-medium text-white">
                           {user.full_name || 'Unbekannt'}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                        <p className="truncate text-xs text-muted-foreground">{user.email}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
+                  <td className="hidden px-4 py-3 md:table-cell">
                     <span className="text-sm text-muted-foreground">
                       {user.company_name || '—'}
                     </span>
@@ -114,36 +111,53 @@ export default function AdminUserTable({
                   <td className="px-4 py-3 text-center">
                     <div className="flex flex-col items-center gap-1">
                       {user.can_upload ? (
-                        <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10 text-[10px]">
+                        <Badge
+                          variant="outline"
+                          className="border-primary/30 bg-primary/10 text-[10px] text-primary"
+                        >
+                          <span className="mr-1 inline-block size-1.5 rounded-full bg-primary" />
                           Aktiv
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="border-white/10 text-muted-foreground text-[10px]">
+                        <Badge
+                          variant="outline"
+                          className="border-white/10 text-[10px] text-muted-foreground"
+                        >
                           Wartend
                         </Badge>
                       )}
                       {user.is_super_admin && (
-                        <div className="flex items-center gap-1">
-                          <Shield className="size-3 text-primary" />
-                          <span className="text-[10px] text-primary">Admin</span>
-                        </div>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-primary">
+                          <Shield className="size-3" />
+                          Admin
+                        </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center hidden lg:table-cell">
-                    <div className="text-xs text-muted-foreground space-y-0.5">
-                      <div>{user.email_limit?.toLocaleString() || '2,000'} Mails</div>
-                      <div>{user.knowledge_base_limit || 5} KBs</div>
+                  <td className="hidden px-4 py-3 text-center lg:table-cell">
+                    <div className="space-y-0.5 text-xs text-muted-foreground tabular-nums">
+                      <div>
+                        <span className="text-white/80">
+                          {user.email_limit?.toLocaleString('de-DE') || '2.000'}
+                        </span>{' '}
+                        Mails
+                      </div>
+                      <div>
+                        <span className="text-white/80">{user.knowledge_base_limit || 5}</span> KBs
+                      </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center hidden xl:table-cell" onClick={(e) => e.stopPropagation()}>
+                  <td
+                    className="hidden px-4 py-3 text-center xl:table-cell"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {activeSolutions.length > 0 ? (
                       <div className="flex flex-wrap justify-center gap-1">
                         {activeSolutions.map((label) => (
                           <Badge
                             key={label}
                             variant="outline"
-                            className="border-primary/30 text-primary bg-primary/10 text-[10px]"
+                            className="border-white/10 bg-white/[0.03] text-[10px] text-muted-foreground"
                           >
                             {label}
                           </Badge>
@@ -153,23 +167,26 @@ export default function AdminUserTable({
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-2">
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
                       {!user.is_super_admin && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onToggleUpload(user.user_id, !user.can_upload)}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleUpload(user.user_id, !user.can_upload);
+                          }}
                           disabled={isUpdateLoading === user.user_id}
-                          className="text-xs h-7 px-2"
+                          className="rounded-lg border border-white/10 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary disabled:opacity-50"
                         >
                           {isUpdateLoading === user.user_id
-                            ? '...'
+                            ? '…'
                             : user.can_upload
                             ? 'Sperren'
                             : 'Freischalten'}
-                        </Button>
+                        </button>
                       )}
+                      <ChevronRight className="size-4 text-muted-foreground/40 transition-colors group-hover:text-primary" />
                     </div>
                   </td>
                 </tr>

@@ -48,7 +48,7 @@ function EditableLimit({ label, value, defaultValue, max, userId, isLoading, onS
           <button
             onClick={handleSave}
             disabled={isLoading}
-            className="p-1 text-emerald-400 hover:text-emerald-300 disabled:opacity-50 transition-colors"
+            className="p-1 text-primary hover:text-primary/80 disabled:opacity-50 transition-colors"
           >
             <Save size={14} />
           </button>
