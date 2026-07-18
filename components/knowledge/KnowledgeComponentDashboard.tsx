@@ -25,6 +25,12 @@ const SkillsView = dynamic(
   { ssr: false }
 )
 
+// Standardantworten-Ansicht (fertige Antworttexte unter einer Datenbank)
+const StandardAnswersView = dynamic(
+  () => import('@/components/knowledge/StandardAnswersView'),
+  { ssr: false }
+)
+
 // Dynamischer Import für Knowledge Graph
 const KnowledgeGraphView = dynamic(
   () => import('@/components/knowledge/KnowledgeGraphView'),
@@ -68,7 +74,8 @@ import {
   RotateCcw,
   FolderOpen,
   SlidersHorizontal,
-  Sparkles
+  Sparkles,
+  TextQuote
 } from "lucide-react"
 import { format, subDays, subWeeks, subMonths, isAfter } from "date-fns"
 import { toast } from "sonner"
@@ -2066,10 +2073,10 @@ export default function KnowledgeComponentDashboard() {
   >(null)
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<any | null>(null)
   const [companyName, setCompanyName] = useState<string>("")
-  const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph' | 'skills'>('upload')
+  const [activeTab, setActiveTab] = useState<'upload' | 'entries' | 'graph' | 'skills' | 'standardantworten'>('upload')
   const [showGraphView, setShowGraphView] = useState(false)
   // Only stretch to full height when entries or search tabs need scrolling
-  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || activeTab === 'skills' || showGraphView)
+  const needsFullHeight = selectedKnowledgeBaseId != null && (activeTab === 'entries' || activeTab === 'graph' || activeTab === 'skills' || activeTab === 'standardantworten' || showGraphView)
   const [knowledgeItems, setKnowledgeItems] = useState<any[]>([])
   const [loadingItems, setLoadingItems] = useState(false)
   
@@ -4277,6 +4284,17 @@ export default function KnowledgeComponentDashboard() {
             <Workflow className="size-3.5 sm:size-4 flex-shrink-0" />
             <span>Skills</span>
           </button>
+          <button
+            onClick={() => setActiveTab('standardantworten')}
+            className={`flex items-center gap-1.5 rounded-lg px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out whitespace-nowrap ${
+              activeTab === 'standardantworten'
+                ? 'bg-primary text-foreground shadow-lg'
+                : 'bg-muted text-muted-foreground hover:bg-secondary/80'
+            }`}
+          >
+            <TextQuote className="size-3.5 sm:size-4 flex-shrink-0" />
+            <span>Standardantworten</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -4886,6 +4904,23 @@ export default function KnowledgeComponentDashboard() {
                           <div className="flex items-center justify-center h-48 px-4">
                             <p className="text-sm text-muted-foreground text-center">
                               Bitte wählen Sie <span className="xl:hidden">oben</span><span className="hidden xl:inline">links</span> eine Wissensdatenbank aus, um deren Skills zu verwalten.
+                            </p>
+                          </div>
+                        )}
+
+                        {activeTab === 'standardantworten' && selectedKnowledgeBaseId && (
+                          <div className="flex flex-col flex-1 overflow-hidden min-h-0">
+                            <StandardAnswersView
+                              knowledgeBaseId={selectedKnowledgeBaseId}
+                              knowledgeBaseName={selectedKnowledgeBase?.title || selectedKnowledgeBase?.name}
+                            />
+                          </div>
+                        )}
+
+                        {activeTab === 'standardantworten' && !selectedKnowledgeBaseId && (
+                          <div className="flex items-center justify-center h-48 px-4">
+                            <p className="text-sm text-muted-foreground text-center">
+                              Bitte wählen Sie <span className="xl:hidden">oben</span><span className="hidden xl:inline">links</span> eine Wissensdatenbank aus, um deren Standardantworten zu verwalten.
                             </p>
                           </div>
                         )}
