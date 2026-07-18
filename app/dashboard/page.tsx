@@ -5,6 +5,7 @@ import { useEffect, useState, useRef } from "react"
 import { clearCompanyData, resolveUserCompany } from "@/lib/domain-manager"
 import Link from "next/link"
 import Image from "next/image"
+import { DynamicLogo } from "@/components/DynamicLogo"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
 import { de } from "date-fns/locale"
@@ -363,13 +364,11 @@ export default function Dashboard() {
                       className="flex items-center gap-2 sm:gap-2.5 hover:opacity-80 transition-opacity"
                       title="Zur Wissensdatenbank"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src="/wissensdatenbank-logo-v2.png"
+                      {/* „Lebendiges" Marken-Logo — organische Eigenrotation wie in der SupportAI */}
+                      <DynamicLogo
+                        living
                         alt=""
-                        aria-hidden
-                        className="h-7 w-7 sm:h-8 sm:w-8 md:h-9 md:w-9 select-none"
-                        draggable={false}
+                        className="h-7 w-7 sm:h-8 sm:w-8 md:h-9 md:w-9"
                       />
                     </button>
                   </div>
@@ -424,7 +423,7 @@ export default function Dashboard() {
             {/* Content basierend auf activeTab */}
             {activeTab === 'knowledge' ? (
               // Wissensdatenbank
-              <div className="mx-auto max-w-7xl pt-2 flex-1 overflow-hidden flex flex-col w-full min-h-0">
+              <div className="mx-auto max-w-[1536px] pt-2 flex-1 overflow-hidden flex flex-col w-full min-h-0">
                 <KnowledgeComponent />
               </div>
             ) : (

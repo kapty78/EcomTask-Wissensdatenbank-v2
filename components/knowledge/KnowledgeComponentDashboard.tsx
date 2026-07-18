@@ -4422,7 +4422,7 @@ export default function KnowledgeComponentDashboard() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden h-full">
-      <div className={`mx-auto w-full max-w-7xl px-1.5 sm:px-3 md:px-4 lg:px-8 pb-3 flex flex-col ${
+      <div className={`mx-auto w-full max-w-[1536px] px-1.5 sm:px-3 md:px-4 lg:px-8 pb-3 flex flex-col ${
         needsFullHeight ? 'flex-1 overflow-hidden' : 'overflow-auto'
       }`}>
         {/* Main Content - Responsive Layout mit dynamischer Positionierung */}
