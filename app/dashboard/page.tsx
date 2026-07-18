@@ -55,7 +55,20 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'knowledge' | 'admin'>('knowledge')
   // Echte Firma des eingeloggten Benutzers (aus profiles.company_id, nicht localStorage)
   const [companyName, setCompanyName] = useState<string | null>(null)
-  
+
+  // Embedded-Modus: läuft die WDB im iframe (Split/Vollbild aus Support AI)?
+  // Dann komplette Kopfleiste (Logo, Firmenname, Logout, Admin, Agent-Chat) ausblenden —
+  // Support AI liefert die äußere Navigation. Post-Mount gesetzt, um Hydration-Mismatch
+  // zu vermeiden (Server rendert nie im iframe).
+  const [isEmbedded, setIsEmbedded] = useState(false)
+  useEffect(() => {
+    try {
+      setIsEmbedded(window.self !== window.top)
+    } catch {
+      setIsEmbedded(true)
+    }
+  }, [])
+
   // State für das Einladungs-Dropdown
   const [showInviteDropdown, setShowInviteDropdown] = useState(false)
   const [invitableUsers, setInvitableUsers] = useState<Profile[]>([])
@@ -337,7 +350,8 @@ export default function Dashboard() {
       ) : (
         <main className="flex-1 w-full relative z-10 flex flex-col min-h-0 overflow-hidden">
           <div className="flex flex-col flex-1 w-full p-2 pt-0 pb-0 bg-[#1a1a1a] overflow-hidden min-h-0">
-            {/* Professioneller Header mit mehr Inhalt */}
+            {/* Professioneller Header mit mehr Inhalt — im Embedded-Modus komplett ausgeblendet */}
+            {!isEmbedded && (
             <div className="mx-auto max-w-7xl w-full mb-2 sm:mb-3 md:mb-4 mt-1.5 sm:mt-2 md:mt-3 px-1.5 sm:px-3 md:px-4 lg:px-8 flex-shrink-0">
               <div className="w-full border border-white/10 bg-[#1e1e1e] rounded-lg md:rounded-xl">
                 {/* Top Bar mit Logo und User — links/rechts symmetrisch (flex-1 basis-0), damit der Chat exakt mittig sitzt */}
@@ -405,6 +419,7 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Content basierend auf activeTab */}
             {activeTab === 'knowledge' ? (
@@ -432,16 +447,18 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Mobile floating agent chat button - visible below md */}
-      <div className="md:hidden">
-        <KnowledgeAgentLauncher
-          variant="floating"
-          userName={
-            userProfile?.full_name ||
-            (user?.email ? String(user.email).split("@")[0] : undefined)
-          }
-        />
-      </div>
+      {/* Mobile floating agent chat button - visible below md; im Embedded-Modus aus */}
+      {!isEmbedded && (
+        <div className="md:hidden">
+          <KnowledgeAgentLauncher
+            variant="floating"
+            userName={
+              userProfile?.full_name ||
+              (user?.email ? String(user.email).split("@")[0] : undefined)
+            }
+          />
+        </div>
+      )}
     </div>
   )
 }
