@@ -13,12 +13,17 @@ import AdminUserTable from './AdminUserTable';
 import AdminUserCardList from './AdminUserCardList';
 import AdminUserDetailSheet from './AdminUserDetailSheet';
 import AdminCompanyGallery, { CompanyGroup, companyMonogram } from './AdminCompanyGallery';
+import CompanyMailModelSetting from './CompanyMailModelSetting';
 
 interface AdminPanelProps {
   user: User;
 }
 
 const NONE_KEY = '__none__';
+
+/** selectedCompanyId ist nur bei einer echten Firma eine UUID (sonst name:/__none__). */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Stabiler Gruppenschlüssel: company_id, sonst der Name, sonst „ohne Firma". */
 function companyKeyOf(u: UserPermission): string {
@@ -241,6 +246,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
       {inCompanyView ? (
         <>
+          {/* Mailagent-Modell pro Unternehmen (nur bei echter Firma mit UUID) */}
+          {selectedCompanyId &&
+            UUID_RE.test(selectedCompanyId) &&
+            selectedCompany?.hasCompany && (
+              <CompanyMailModelSetting
+                companyId={selectedCompanyId}
+                companyName={selectedCompany.name}
+              />
+            )}
+
           {/* Desktop Table (Nutzer der Firma) */}
           <div className="hidden md:block">
             <AdminUserTable
