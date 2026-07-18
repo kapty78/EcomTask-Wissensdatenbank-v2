@@ -17,6 +17,11 @@ function getPayload(overrides: Record<string, unknown> = {}) {
     effective: { option: 'openai_gpt_5_4', provider: 'openai', model: 'gpt-5.4-2026-03-05', source: 'default' },
     options: [],
     has_active_fine_tuning: false,
+    availability: {
+      openai_gpt_5_4: true,
+      scaleway_glm_5_2: true,
+      featherless_glm_5_2: true,
+    },
     glm_available: true,
     updated_at: null,
     updated_by: null,
@@ -44,20 +49,32 @@ describe('CompanyMailModelSetting', () => {
     await waitFor(() => expect(screen.getByText(/Fine-Tuning-Modell aktiviert/)).toBeInTheDocument());
   });
 
-  it('disables the GLM option when GLM is not globally available', async () => {
-    apiFetch.mockResolvedValueOnce(fakeResponse(getPayload({ glm_available: false })));
+  it('disables a GLM option when its provider is not globally available', async () => {
+    apiFetch.mockResolvedValueOnce(
+      fakeResponse(
+        getPayload({
+          availability: {
+            openai_gpt_5_4: true,
+            scaleway_glm_5_2: false,
+            featherless_glm_5_2: true,
+          },
+        }),
+      ),
+    );
     render(<CompanyMailModelSetting companyId={COMPANY_ID} companyName="Acme" />);
-    await waitFor(() => expect(screen.getByRole('radio', { name: /GLM-5.2/ })).toBeInTheDocument());
-    expect(screen.getByRole('radio', { name: /GLM-5.2/ })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Scaleway/ })).toBeInTheDocument());
+    expect(screen.getByRole('radio', { name: /Scaleway/ })).toBeDisabled();
+    // Featherless bleibt in diesem Fall verfügbar (unabhängige Kill-Switches).
+    expect(screen.getByRole('radio', { name: /Featherless/ })).toBeEnabled();
     expect(screen.getByText(/nicht freigeschaltet/)).toBeInTheDocument();
   });
 
-  it('enables save on change and shows the confirm dialog with company + target, then PATCHes', async () => {
+  it('enables save on change and shows the confirm dialog with company + target, then PATCHes (Scaleway)', async () => {
     apiFetch.mockResolvedValueOnce(fakeResponse(getPayload()));
     render(<CompanyMailModelSetting companyId={COMPANY_ID} companyName="Acme" />);
-    await waitFor(() => expect(screen.getByRole('radio', { name: /GLM-5.2/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Scaleway/ })).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('radio', { name: /GLM-5.2/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Scaleway/ }));
     const saveBtn = screen.getByRole('button', { name: /Änderung speichern/ });
     expect(saveBtn).toBeEnabled();
 
@@ -67,7 +84,7 @@ describe('CompanyMailModelSetting', () => {
     expect(screen.getByText(/umstellen\?/)).toBeInTheDocument();
 
     apiFetch.mockResolvedValueOnce(
-      fakeResponse(getPayload({ effective: { option: 'featherless_glm_5_2', provider: 'featherless', model: 'zai-org/GLM-5.2', source: 'explicit' } })),
+      fakeResponse(getPayload({ effective: { option: 'scaleway_glm_5_2', provider: 'scaleway', model: 'glm-5.2', source: 'explicit' } })),
     );
     fireEvent.click(screen.getByRole('button', { name: /^Umstellen$/ }));
 
@@ -79,7 +96,7 @@ describe('CompanyMailModelSetting', () => {
     );
     // PATCH body enthaelt nur die Options-ID.
     const patchInit = apiFetch.mock.calls.at(-1)![1];
-    expect(JSON.parse(patchInit.body)).toEqual({ option: 'featherless_glm_5_2' });
+    expect(JSON.parse(patchInit.body)).toEqual({ option: 'scaleway_glm_5_2' });
   });
 
   it('shows an isolated error message when the GET fails (no crash)', async () => {

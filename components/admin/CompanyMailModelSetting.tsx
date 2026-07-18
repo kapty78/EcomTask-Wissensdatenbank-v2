@@ -18,6 +18,9 @@ interface MailModelResponse {
     source: 'explicit' | 'default';
   };
   has_active_fine_tuning: boolean;
+  /** Verfügbarkeit je Option (Kill-Switch-Spiegel). Fehlt bei alter API. */
+  availability?: Partial<Record<MailModelOptionId, boolean>>;
+  /** Rückwärtskompatibel: entspricht availability['featherless_glm_5_2']. */
   glm_available: boolean;
 }
 
@@ -138,8 +141,13 @@ export default function CompanyMailModelSetting({ companyId, companyName }: Prop
           >
             {MAIL_MODEL_OPTIONS.map((opt) => {
               const isSelected = selected === opt.id;
-              const isGlm = opt.id === 'featherless_glm_5_2';
-              const glmDisabled = isGlm && !data.glm_available;
+              // Verfügbarkeit je Option. Fehlt die Map (alte API-Antwort), nur
+              // Featherless über das ältere glm_available-Feld sperren.
+              const optDisabled =
+                data.availability?.[opt.id] === false ||
+                (data.availability === undefined &&
+                  opt.id === 'featherless_glm_5_2' &&
+                  !data.glm_available);
               return (
                 <label
                   key={opt.id}
@@ -148,7 +156,7 @@ export default function CompanyMailModelSetting({ companyId, companyName }: Prop
                     isSelected
                       ? 'border-primary/60 bg-primary/10 ring-1 ring-primary/40'
                       : 'border-white/[0.07] bg-white/[0.02] hover:border-white/20',
-                    glmDisabled ? 'cursor-not-allowed opacity-50' : '',
+                    optDisabled ? 'cursor-not-allowed opacity-50' : '',
                   ].join(' ')}
                 >
                   <input
@@ -157,7 +165,7 @@ export default function CompanyMailModelSetting({ companyId, companyName }: Prop
                     className="sr-only"
                     value={opt.id}
                     checked={isSelected}
-                    disabled={glmDisabled || isSaving}
+                    disabled={optDisabled || isSaving}
                     onChange={() => {
                       setSelected(opt.id);
                       setIsConfirming(false);
@@ -178,7 +186,7 @@ export default function CompanyMailModelSetting({ companyId, companyName }: Prop
                       {opt.label} <span className="text-zinc-500">/ {opt.providerLabel}</span>
                     </span>
                     <span className="block truncate text-[11px] text-zinc-500">{opt.model}</span>
-                    {glmDisabled && (
+                    {optDisabled && (
                       <span className="mt-1 block text-[11px] text-zinc-400">
                         Serverseitig nicht freigeschaltet
                       </span>

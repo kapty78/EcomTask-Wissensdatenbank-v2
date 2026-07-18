@@ -56,6 +56,7 @@ const params = { params: { companyId: COMPANY_ID } };
 beforeEach(() => {
   requireSuperAdmin.mockReset();
   delete process.env.FEATHERLESS_MAIL_ENABLED;
+  delete process.env.SCALEWAY_MAIL_ENABLED;
 });
 
 describe('mail-model route auth + validation', () => {
@@ -114,6 +115,44 @@ describe('mail-model route auth + validation', () => {
     asSuperAdmin({ company: { id: COMPANY_ID } });
     const res = await PATCH(req({ option: 'featherless_glm_5_2' }) as any, params as any);
     expect(res.status).toBe(409);
+  });
+
+  it('PATCH rejects Scaleway-GLM with 409 when Scaleway is not enabled', async () => {
+    asSuperAdmin({ company: { id: COMPANY_ID } });
+    const res = await PATCH(req({ option: 'scaleway_glm_5_2' }) as any, params as any);
+    expect(res.status).toBe(409);
+  });
+
+  it('kill-switches are independent: Featherless on does NOT enable Scaleway', async () => {
+    process.env.FEATHERLESS_MAIL_ENABLED = 'true';
+    asSuperAdmin({ company: { id: COMPANY_ID } });
+    const res = await PATCH(req({ option: 'scaleway_glm_5_2' }) as any, params as any);
+    expect(res.status).toBe(409);
+  });
+
+  it('PATCH allows Scaleway-GLM when SCALEWAY_MAIL_ENABLED=true', async () => {
+    process.env.SCALEWAY_MAIL_ENABLED = 'true';
+    asSuperAdmin({
+      company: { id: COMPANY_ID },
+      appSettingRow: { value: { provider: 'scaleway', model: 'glm-5.2' }, updated_at: 't', updated_by: 'admin-1' },
+    });
+    const res = await PATCH(req({ option: 'scaleway_glm_5_2' }) as any, params as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.effective.option).toBe('scaleway_glm_5_2');
+  });
+
+  it('GET exposes a per-option availability map', async () => {
+    process.env.SCALEWAY_MAIL_ENABLED = 'true';
+    asSuperAdmin({ company: { id: COMPANY_ID }, appSettingRow: null });
+    const body = await (await GET(req() as any, params as any)).json();
+    expect(body.availability).toEqual(
+      expect.objectContaining({
+        scaleway_glm_5_2: true,
+        featherless_glm_5_2: false,
+        openai_gpt_5_4: true,
+      }),
+    );
   });
 
   it('PATCH stores OpenAI and returns the re-read effective setting', async () => {

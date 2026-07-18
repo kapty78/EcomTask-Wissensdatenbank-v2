@@ -12,8 +12,11 @@
 export const MAIL_MODEL_SETTING_KEY = 'mail_completion_model';
 export const MAIL_MODEL_SCHEMA_VERSION = 1;
 
-export type MailModelOptionId = 'openai_gpt_5_4' | 'featherless_glm_5_2';
-export type MailModelProvider = 'openai' | 'featherless';
+export type MailModelOptionId =
+  | 'openai_gpt_5_4'
+  | 'featherless_glm_5_2'
+  | 'scaleway_glm_5_2';
+export type MailModelProvider = 'openai' | 'featherless' | 'scaleway';
 
 export interface MailModelOption {
   id: MailModelOptionId;
@@ -35,6 +38,13 @@ export const MAIL_MODEL_OPTIONS: MailModelOption[] = [
     model: 'gpt-5.4-2026-03-05',
   },
   {
+    id: 'scaleway_glm_5_2',
+    label: 'GLM-5.2',
+    provider: 'scaleway',
+    providerLabel: 'Scaleway (EU)',
+    model: 'glm-5.2',
+  },
+  {
     id: 'featherless_glm_5_2',
     label: 'GLM-5.2',
     provider: 'featherless',
@@ -53,7 +63,11 @@ export function getMailModelOption(id: MailModelOptionId): MailModelOption {
 }
 
 export function isMailModelOptionId(value: unknown): value is MailModelOptionId {
-  return value === 'openai_gpt_5_4' || value === 'featherless_glm_5_2';
+  return (
+    value === 'openai_gpt_5_4' ||
+    value === 'featherless_glm_5_2' ||
+    value === 'scaleway_glm_5_2'
+  );
 }
 
 /** app_settings.value → Options-ID (per Provider). null bei unbekanntem Wert. */
@@ -62,6 +76,7 @@ export function optionFromSettingValue(value: unknown): MailModelOptionId | null
   const provider = (value as { provider?: unknown }).provider;
   if (provider === 'openai') return 'openai_gpt_5_4';
   if (provider === 'featherless') return 'featherless_glm_5_2';
+  if (provider === 'scaleway') return 'scaleway_glm_5_2';
   return null;
 }
 
