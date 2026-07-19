@@ -3,7 +3,7 @@ import { cookies } from "next/headers"
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
-import { streamAgentResponses } from "@/lib/knowledge-agent/responses-stream"
+import { streamScalewayKnowledgeAgent } from "@/lib/knowledge-agent/scaleway-stream"
 
 import { Database } from "@/supabase/types"
 import { env } from "@/lib/env"
@@ -61,12 +61,25 @@ type AgentToolActivity = {
 }
 
 /** WP-D1 (Contract v2): strukturierte Aenderung eines Schreib-Tools —
- *  Format gespiegelt aus Support AI shared/types.ts (EntityChange). */
+ *  Format gespiegelt aus Support AI shared/types.ts (EntityChange).
+ *
+ *  WP-B3 (2026-07-17): optionale Audit-Belege. Das Cockpit toleriert ihr Fehlen
+ *  dauerhaft (es verifiziert KB-Aenderungen per Read-back gegen die DB) — sobald
+ *  ein WDB-Tool eine audit_id/Content-Hashes liefert, werden sie hier
+ *  durchgereicht und das Cockpit kann direkt bestaetigen statt nachzulesen.
+ *
+ *  Operation-Enum-Mapping (WDB ↔ Cockpit-EntityChange.operation):
+ *    WDB "create" → "create", "delete" → "delete",
+ *    WDB "update" → Cockpit "patch"/"replace" (der Read-back prueft nur den
+ *    updated_at-Timestamp, ein 1:1-Mapping ist daher nicht noetig). */
 type EntityChange = {
   entity_type: string
   entity_id: string
   operation: "create" | "update" | "delete"
   field_name?: string | null
+  audit_id?: string | null
+  content_hash_before?: string | null
+  content_hash_after?: string | null
 }
 
 type AgentRunError = {
@@ -89,11 +102,21 @@ type AgentRunResult = {
   errors: AgentRunError[]
 }
 
+/** Tools, deren NAME auf ein Schreib-Verb matcht, die aber KEINE Entitaet
+ *  persistieren: `set_active_knowledge_base` ist eine Session-/Navigations-
+ *  Aktion, `generate_question_prompt` ist ein reiner Vorschlag ohne Speicherung
+ *  (Save passiert extern via Mail-Agent). Ohne diese Ausnahme meldet ein reiner
+ *  Analyse-/Lese-Turn faelschlich "1 Aenderung durchgefuehrt" (Phantom-Change
+ *  mit entity_id "unbekannt") und verschmutzt die "Durchgefuehrte Aenderungen"-
+ *  Uebersicht des Orchestrators. */
+const NON_PERSISTING_TOOLS = new Set(["set_active_knowledge_base", "generate_question_prompt"])
+
 /** WP-D1: generischer Change-Extraktor — leitet aus Tool-Name (Operation)
  *  und Result-Feldern (IDs) die strukturierte Aenderung ab, statt alle
  *  ~50 Schreib-Tools einzeln anzufassen. Lese-Tools liefern null. */
 function extractEntityChange(toolName: string, result: any): EntityChange | null {
   if (!result || typeof result !== "object") return null
+  if (NON_PERSISTING_TOOLS.has(toolName)) return null
   const op: EntityChange["operation"] | null =
     /^(delete|remove)_/.test(toolName) ? "delete"
     : /^(create|add|import|upload|generate)_/.test(toolName) ? "create"
@@ -107,9 +130,25 @@ function extractEntityChange(toolName: string, result: any): EntityChange | null
     ["knowledge_base", result.knowledge_base?.id ?? result.knowledge_base_id],
     [String(result.deleted?.type || "entity"), result.deleted?.id],
   ]
+  // WP-B3: audit_id/Content-Hashes durchreichen, falls ein Tool sie liefert
+  // (heute i.d.R. nicht — das Cockpit verifiziert dann per Read-back).
+  const auditId =
+    typeof result.audit_id === "string" ? result.audit_id
+    : typeof result.chunk?.audit_id === "string" ? result.chunk.audit_id
+    : typeof result.fact?.audit_id === "string" ? result.fact.audit_id
+    : null
+  const hashBefore = typeof result.content_hash_before === "string" ? result.content_hash_before : null
+  const hashAfter = typeof result.content_hash_after === "string" ? result.content_hash_after : null
+  const withAudit = (change: EntityChange): EntityChange => ({
+    ...change,
+    ...(auditId ? { audit_id: auditId } : {}),
+    ...(hashBefore ? { content_hash_before: hashBefore } : {}),
+    ...(hashAfter ? { content_hash_after: hashAfter } : {}),
+  })
+
   for (const [type, id] of candidates) {
     if (typeof id === "string" && id.length > 0) {
-      return { entity_type: type, entity_id: id, operation: op }
+      return withAudit({ entity_type: type, entity_id: id, operation: op })
     }
   }
   // Schreib-Tool ohne erkennbare ID: Aenderung trotzdem ausweisen,
@@ -212,6 +251,20 @@ const openai = new OpenAI({
   apiKey: env.OPENAI_API_KEY
 })
 const AGENT_MODEL = env.KNOWLEDGE_AGENT_MODEL
+const AUX_MODEL = env.KNOWLEDGE_AGENT_AUX_MODEL
+let scalewayClient: OpenAI | null = null
+
+function getScalewayClient(): OpenAI {
+  if (scalewayClient) return scalewayClient
+  if (!env.SCALEWAY_API_KEY) {
+    throw new Error("SCALEWAY_API_KEY fehlt fuer den Wissensdatenbank-Agenten.")
+  }
+  scalewayClient = new OpenAI({
+    apiKey: env.SCALEWAY_API_KEY,
+    baseURL: env.SCALEWAY_BASE_URL,
+  })
+  return scalewayClient
+}
 
 const KNOWLEDGE_API_URL = env.KNOWLEDGE_API_URL
 const KNOWLEDGE_API_KEY = env.KNOWLEDGE_API_KEY
@@ -230,31 +283,29 @@ async function emitKickoffTextFromModel(params: {
   emit: AgentStreamEmitter
   message: string
   attachmentCount: number
+  signal?: AbortSignal
 }) {
-  const { emit, message, attachmentCount } = params
+  const { emit, message, attachmentCount, signal } = params
   try {
-    const kickoffStream = await openai.chat.completions.create({
-      model: AGENT_MODEL,
-      stream: true,
-      // Kosmetische Startzeile: kein Reasoning noetig (schnell + guenstig).
-      // gpt-5.6-terra verlangt max_completion_tokens statt max_tokens; ohne
-      // tools ist reasoning_effort:"none" zulaessig (gegen Prod verifiziert).
-      // Cast: das "none"-Enum ist neuer als openai@4.104.0-Typen, wird zur
-      // Laufzeit aber unveraendert an die API durchgereicht.
-      reasoning_effort: "none" as any,
-      max_completion_tokens: 200,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Schreibe genau eine sehr kurze Live-Startzeile auf Deutsch (max. 12 Woerter), was du jetzt tust. Keine Begruessung, keine Liste, kein Markdown-Heading."
-        },
-        {
-          role: "user",
-          content: `Anfrage: ${clip(message, 220)}${attachmentCount > 0 ? ` (mit ${attachmentCount} Anhang${attachmentCount > 1 ? "en" : ""})` : ""}`
-        }
-      ]
-    })
+    const kickoffStream = await getScalewayClient().chat.completions.create(
+      {
+        model: AGENT_MODEL,
+        stream: true,
+        max_tokens: 200,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Schreibe genau eine sehr kurze Live-Startzeile auf Deutsch (max. 12 Woerter), was du jetzt tust. Keine Begruessung, keine Liste, kein Markdown-Heading."
+          },
+          {
+            role: "user",
+            content: `Anfrage: ${clip(message, 220)}${attachmentCount > 0 ? ` (mit ${attachmentCount} Anhang${attachmentCount > 1 ? "en" : ""})` : ""}`
+          }
+        ]
+      },
+      { signal }
+    )
 
     let emitted = false
     for await (const chunk of kickoffStream) {
@@ -1646,10 +1697,83 @@ async function getOrCreateConversation(params: {
   companyId: string | null
   knowledgeBaseId: string | null
   requestedConversationId: string | null
+  /** Bei signierten Cross-Agent-Aufrufen ist die Company – nicht der zufaellig
+   *  gewaehlte Profil-User – die stabile Mandantengrenze. */
+  trustedCompanyId?: string | null
 }): Promise<ConversationResolution> {
-  const { authClient, serviceClient, userId, companyId, knowledgeBaseId, requestedConversationId } = params
+  const {
+    authClient,
+    serviceClient,
+    userId,
+    companyId,
+    knowledgeBaseId,
+    requestedConversationId,
+    trustedCompanyId,
+  } = params
 
   if (requestedConversationId) {
+    if (trustedCompanyId) {
+      const { data: existing, error } = await serviceClient
+        .from("agent_conversations")
+        .select("id, user_id, company_id, knowledge_base_id")
+        .eq("id", requestedConversationId)
+        .maybeSingle()
+
+      if (error) {
+        throw new Error(`Cross-Agent-Conversation konnte nicht geladen werden: ${error.message}`)
+      }
+      if (existing) {
+        if (existing.company_id !== trustedCompanyId) {
+          throw new Error("Cross-Agent-Conversation gehoert zu einer anderen Company.")
+        }
+        return {
+          conversationId: existing.id as string,
+          companyId: existing.company_id || null,
+          knowledgeBaseId: existing.knowledge_base_id || null
+        }
+      }
+
+      // Support AI und WDB besitzen getrennte Conversation-Tabellen. Dieselbe
+      // ID darf deshalb bewusst in beiden Tabellen existieren und bildet den
+      // stabilen Schluessel fuer History und aktive Wissensdatenbank.
+      const { data: created, error: createError } = await serviceClient
+        .from("agent_conversations")
+        .insert({
+          id: requestedConversationId,
+          user_id: userId,
+          company_id: trustedCompanyId,
+          knowledge_base_id: knowledgeBaseId || null,
+          status: "active"
+        })
+        .select("id")
+        .single()
+
+      if (createError || !created?.id) {
+        // Ein paralleler Erstaufruf kann die Zeile zwischen Lesen und Insert
+        // angelegt haben. In diesem Fall einmal mandantensicher nachlesen.
+        const { data: raced } = await serviceClient
+          .from("agent_conversations")
+          .select("id, company_id, knowledge_base_id")
+          .eq("id", requestedConversationId)
+          .eq("company_id", trustedCompanyId)
+          .maybeSingle()
+        if (!raced) {
+          throw new Error(`Cross-Agent-Conversation konnte nicht angelegt werden: ${createError?.message || "unbekannter Fehler"}`)
+        }
+        return {
+          conversationId: raced.id as string,
+          companyId: raced.company_id || null,
+          knowledgeBaseId: raced.knowledge_base_id || null
+        }
+      }
+
+      return {
+        conversationId: created.id as string,
+        companyId: trustedCompanyId,
+        knowledgeBaseId: knowledgeBaseId || null
+      }
+    }
+
     try {
       const { data: existing, error } = await authClient
         .from("agent_conversations")
@@ -1665,7 +1789,7 @@ async function getOrCreateConversation(params: {
         }
       }
     } catch {
-      // Fallback auf neue Conversation
+      // Fallback auf neue Conversation fuer regulaere User-Aufrufe
     }
   }
 
@@ -1929,8 +2053,14 @@ const PARALLEL_SAFE_TOOLS = new Set<string>([
 //      Verweises auf einen fuer das Modell unerreichbaren "Trace".
 const MAX_TOOL_RESULT_HISTORY_BYTES = 2048
 /** Batch-Tools ersetzen VIELE Einzel-Calls — ihr Ergebnis darf entsprechend
- *  mehr History-Budget tragen (1 × 16KB statt 24 × 2KB). */
-const HISTORY_BUDGET_BY_TOOL: Record<string, number> = { search_kb_text: 16_000 }
+ *  mehr History-Budget tragen (1 × 16KB statt 24 × 2KB). Vollstaendige Listen
+ *  (list_documents/list_skills) ebenso: sonst clippt die History die Liste auf
+ *  2KB weg, der Agent haelt sie fuer unvollstaendig und listet erneut (Runaway). */
+const HISTORY_BUDGET_BY_TOOL: Record<string, number> = {
+  search_kb_text: 16_000,
+  list_documents: 16_000,
+  list_skills: 24_000,
+}
 /** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
 const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
 /** Absolute Sicherheitsgrenze auch fuer Detail-Tools (~16k Tokens). */
@@ -2063,15 +2193,45 @@ async function executeTool(params: {
     // ── Mail-Agent Skills (feature 002) ──────────────────────────────
     case "list_skills": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skills nicht verfügbar.")
-      const data = await callSkillsApi({ method: "GET", path: "/api/skills", companyId: defaultCompanyId })
-      const items: any[] = Array.isArray(data?.items) ? data.items : []
+      // /api/skills paginiert (max 100/Seite, next_cursor). Frueher wurde nur die
+      // erste Seite geholt → der Agent hielt die Liste fuer unvollstaendig und
+      // suchte per query-Varianten weiter (Runaway, 20+ Calls, 4 Min). Jetzt:
+      // vollstaendig durchpaginieren und ein authoritatives complete/total-Signal
+      // liefern, damit der Agent nach EINEM Aufruf weiss, dass er alles hat.
+      const items: any[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < 50; page++) {
+        const data = await callSkillsApi({
+          method: "GET",
+          path: "/api/skills",
+          companyId: defaultCompanyId,
+          query: { limit: "100", ...(cursor ? { cursor } : {}) },
+        })
+        const pageItems: any[] = Array.isArray(data?.items) ? data.items : []
+        items.push(...pageItems)
+        const next = typeof data?.next_cursor === "string" && data.next_cursor ? data.next_cursor : null
+        if (!next || pageItems.length === 0) break
+        cursor = next
+      }
       const q = asOptionalString(args?.query)?.toLowerCase()
       const filtered = q
         ? items.filter((s: any) =>
             `${s.name} ${s.description} ${(s.tags || []).join(" ")}`.toLowerCase().includes(q),
           )
         : items
-      return { result: { skills: filtered, count: filtered.length } } as ToolExecutionResult
+      return {
+        result: {
+          skills: filtered,
+          count: filtered.length,
+          total: items.length,
+          complete: true, // vollstaendig durchpaginiert — das sind ALLE Skills
+          ...(q
+            ? {
+                hinweis: `Auf "${q}" gefiltert (${filtered.length}/${items.length}). Ohne 'query' bekommst du in EINEM Aufruf alle Skills — nicht mit anderen Begriffen erneut auflisten.`,
+              }
+            : {}),
+        },
+      } as ToolExecutionResult
     }
     case "create_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skill kann nicht angelegt werden.")
@@ -2140,7 +2300,7 @@ async function executeTool(params: {
     case "web_search": {
       const query = asString(args?.query, "query")
       const maxResults = asLimit(args?.max_results, 5, 10)
-      const webSearchModel = process.env.KNOWLEDGE_AGENT_WEB_MODEL || AGENT_MODEL
+      const webSearchModel = process.env.KNOWLEDGE_AGENT_WEB_MODEL || AUX_MODEL
 
       try {
         const response: any = await (openai as any).responses.create({
@@ -2463,25 +2623,44 @@ async function executeTool(params: {
 
     case "list_documents": {
       const resolvedKbId = requireKnowledgeBaseId(resolveKnowledgeBaseId(args, activeKnowledgeBaseId))
-      const limit = asLimit(args?.limit, 25, 100)
+      // Standard 500 (statt 25): eine Runde liefert die VOLLSTAENDIGE Liste
+      // normaler KBs. Der alte Cap 25 zwang den Agenten, fehlende Dokumente per
+      // query-Raten zu suchen (Runaway, blieb unvollstaendig: "28 von 35").
+      const limit = asLimit(args?.limit, 500, 1000)
       const query = asOptionalString(args?.query)
 
-      let documents: any[] = []
+      let allDocuments: any[] = []
       try {
-        documents = await loadDocumentsForList({
+        // Alles laden (interner kbItems-Cap 5000), dann erst auf den angefragten
+        // limit schneiden → 'total' ist ehrlich, 'complete' ist verlaesslich.
+        allDocuments = await loadDocumentsForList({
           authClient,
           knowledgeBaseId: resolvedKbId,
           query,
-          limit
+          limit: 5000
         })
       } catch (error: any) {
         throw new Error(`Dokumente konnten nicht geladen werden: ${error?.message || "unbekannter Fehler"}`)
       }
 
+      const total = allDocuments.length
+      const documents = allDocuments.slice(0, limit)
+      const complete = documents.length >= total
+
       return {
         result: {
           knowledge_base_id: resolvedKbId,
           count: documents.length,
+          total,
+          complete,
+          // Authoritatives Vollstaendigkeits-Signal: bei complete=true IST das
+          // die ganze Liste — NICHT erneut mit anderen Begriffen auflisten.
+          ...(complete
+            ? {}
+            : {
+                truncated: true,
+                hinweis: `Es gibt ${total} Dokumente (Filter: ${query ? `"${query}"` : "keiner"}); ${documents.length} zurueckgegeben. Zum Eingrenzen den 'query'-Filter nutzen oder 'limit' erhoehen — NICHT dieselbe Liste mit anderen Suchbegriffen erneut abfragen.`,
+              }),
           documents: documents.map((doc: any) => ({
             id: doc.id,
             title: doc.title || doc.file_name || "Unbekannt",
@@ -2562,7 +2741,7 @@ async function executeTool(params: {
 
       const proposal = await generateFragenprompt({
         openai,
-        model: AGENT_MODEL,
+        model: AUX_MODEL,
         overview,
         problemContext,
         exampleCustomerRequest: exampleRequest,
@@ -4085,7 +4264,7 @@ async function executeTool(params: {
       // For images: use OpenAI Vision
       if (attachmentType.startsWith("image/")) {
         const visionResponse = await openai.chat.completions.create({
-          model: AGENT_MODEL,
+          model: AUX_MODEL,
           messages: [
             {
               role: "user",
@@ -4499,8 +4678,9 @@ async function runAgentWorkflow(params: {
   enableKickoffStream?: boolean
   /** WP-D2: X-Trace-Id des Orchestrator-Turns — in agent_messages.metadata geloggt. */
   traceId?: string | null
+  signal?: AbortSignal
 }): Promise<AgentRunResult> {
-  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream, traceId } = params
+  const { body, message, user, authClient, serviceClient, internalApiBaseUrl, crossAgentCompanyId, enableKickoffStream, traceId, signal } = params
   const emit = params.emit || (() => {})
 
   const requestedConversationId = asOptionalString(body.conversationId)
@@ -4513,7 +4693,8 @@ async function runAgentWorkflow(params: {
     await emitKickoffTextFromModel({
       emit,
       message,
-      attachmentCount
+      attachmentCount,
+      signal
     })
   }
 
@@ -4565,7 +4746,8 @@ async function runAgentWorkflow(params: {
     userId: user.id,
     companyId: currentCompanyId,
     knowledgeBaseId: currentKnowledgeBaseId,
-    requestedConversationId
+    requestedConversationId,
+    trustedCompanyId: crossAgentCompanyId || null
   })
   const conversationId = conversationResolution.conversationId
 
@@ -4729,16 +4911,14 @@ async function runAgentWorkflow(params: {
       })
     }
     // =====================================================================
-    // STREAMING: Use OpenAI streaming API for real-time token delivery
+    // STREAMING: Scaleway/GLM-5.2 mit OpenAI-kompatiblen Chat-Chunks.
     // =====================================================================
-    // gpt-5.6-terra (Reasoning-Modell) fuehrt Tools nur ueber /v1/responses.
-    // streamAgentResponses kapselt den Endpoint und emittiert Chat-kompatible
-    // Chunks — der Akkumulations-Loop unten bleibt unveraendert.
-    const stream = streamAgentResponses(openai, {
+    const stream = streamScalewayKnowledgeAgent(getScalewayClient(), {
       model: AGENT_MODEL,
       messages: conversation,
       tools: KNOWLEDGE_AGENT_TOOLS as any,
       toolChoice: "auto",
+      signal,
     })
 
     // Accumulate the streamed response
@@ -5069,16 +5249,13 @@ async function runAgentWorkflow(params: {
     // Call (das Weglassen ist gegen den Prod-Account nicht verifizierbar —
     // siehe Support AI route.ts, gleiche Begruendung). 25s-Deckel, damit die
     // Finalize-Reserve haelt.
-    const synthStream = await openai.chat.completions.create(
-      {
-        model: AGENT_MODEL,
-        messages: conversation,
-        tools: KNOWLEDGE_AGENT_TOOLS as any,
-        tool_choice: "none",
-        stream: true,
-      },
-      { signal: AbortSignal.timeout(Math.max(10_000, FINALIZE_RESERVE_MS - 5_000)) }
-    )
+    const synthStream = streamScalewayKnowledgeAgent(getScalewayClient(), {
+      model: AGENT_MODEL,
+      messages: conversation,
+      tools: KNOWLEDGE_AGENT_TOOLS as any,
+      toolChoice: "none",
+      signal: AbortSignal.timeout(Math.max(10_000, FINALIZE_RESERVE_MS - 5_000)),
+    })
     for await (const chunk of synthStream) {
       const delta = chunk.choices?.[0]?.delta
       if (delta?.content) {
@@ -5236,6 +5413,7 @@ export async function POST(request: NextRequest) {
         .from("profiles")
         .select("id")
         .eq("company_id", crossAgentCompanyId)
+        .order("id", { ascending: true })
         .limit(1)
         .maybeSingle()
 
@@ -5352,7 +5530,8 @@ export async function POST(request: NextRequest) {
         internalApiBaseUrl,
         crossAgentCompanyId,
         enableKickoffStream: false,
-        traceId
+        traceId,
+        signal: request.signal
       })
       await markDedupCompleted(result)
       return NextResponse.json(result)
@@ -5393,6 +5572,7 @@ export async function POST(request: NextRequest) {
               crossAgentCompanyId,
               enableKickoffStream: true,
               traceId,
+              signal: request.signal,
               emit: (event, payload) => send(event, payload)
             })
             await markDedupCompleted(result)

@@ -70,7 +70,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     type: "function",
     function: {
       name: "list_documents",
-      description: "Listet Dokumente innerhalb einer Wissensdatenbank.",
+      description: "Listet die Dokumente einer Wissensdatenbank. Liefert die VOLLSTAENDIGE Liste in EINEM Aufruf: Feld 'complete' (bei true ist das alles) und 'total' (Gesamtzahl). NICHT wiederholt mit anderen Suchbegriffen aufrufen, um 'mehr zu finden' — zum Eingrenzen 'query' setzen oder 'limit' erhoehen.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -86,8 +86,8 @@ export const KNOWLEDGE_AGENT_TOOLS = [
           limit: {
             type: "integer",
             minimum: 1,
-            maximum: 100,
-            description: "Maximale Anzahl (Standard 25)."
+            maximum: 1000,
+            description: "Maximale Anzahl (Standard 500 — deckt normale KBs vollstaendig ab)."
           }
         }
       }
@@ -194,7 +194,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     function: {
       name: "get_chunk_details",
       description:
-        "Lädt einen oder MEHRERE Chunks (Volltext + Fakten) in EINEM Aufruf. Für mehrere Chunks IMMER chunk_ids als Array nutzen statt das Tool mehrfach aufzurufen. chunk_id ODER chunk_ids ist Pflicht.",
+        "Lädt einen oder MEHRERE Chunks (Volltext + Fakten) in EINEM Aufruf. chunk_ids ist immer Pflicht; für einen einzelnen Chunk ein Array mit genau einer ID senden.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -214,7 +214,8 @@ export const KNOWLEDGE_AGENT_TOOLS = [
             maxItems: 8,
             description: "UUIDs mehrerer Chunks — bevorzugt, wenn mehr als ein Chunk gelesen werden soll."
           }
-        }
+        },
+        required: ["chunk_ids"]
       }
     }
   },
@@ -1045,7 +1046,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
     function: {
       name: "list_skills",
       description:
-        "Listet alle Skills (situativ ladbare Workflow-Pakete) der Firma. Rufe das IMMER auf, BEVOR du eine neue Skill anlegst, um Duplikate zu vermeiden und zu prüfen, ob ein bestehender Skill stattdessen erweitert werden sollte.",
+        "Listet ALLE Skills (situativ ladbare Workflow-Pakete) der Firma — vollstaendig in EINEM Aufruf ('complete': true, 'total' = Gesamtzahl). Rufe das IMMER auf, BEVOR du eine neue Skill anlegst, um Duplikate zu vermeiden und zu prüfen, ob ein bestehender Skill via update_skill erweitert werden sollte. NICHT mit wechselnden 'query'-Begriffen erneut aufrufen, um 'fehlende' Skills zu finden — die erste Liste ist bereits komplett.",
       parameters: {
         type: "object",
         additionalProperties: false,
