@@ -1139,6 +1139,128 @@ export const KNOWLEDGE_AGENT_TOOLS = [
   {
     type: "function",
     function: {
+      name: "list_standard_answers",
+      description:
+        "Listet ALLE Standardantworten der Firma — vollstaendig in EINEM Aufruf ('complete': true, 'total' = Gesamtzahl). Standardantworten sind vorformulierte Antwort-Vorlagen fuer wiederkehrende Anfragetypen (z.B. 'widerruf-bestaetigung', 'sendungsverfolgung-erklaeren') — NICHT zu verwechseln mit KB-Dokumenten (Faktenwissen, → list_documents) oder Skills (mehrschrittige Workflows, → list_skills). Rufe das IMMER auf, BEVOR du eine neue Standardantwort anlegst, um Duplikate zu vermeiden und zu pruefen, ob eine bestehende via update_standard_answer erweitert werden sollte. NICHT mit wechselnden 'query'-Begriffen erneut aufrufen — die erste Liste ist bereits komplett.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: {
+            type: "string",
+            description: "Optionaler Suchbegriff/Thema zum Filtern der Standardantworten-Liste."
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_standard_answer",
+      description:
+        "Laedt eine einzelne Standardantwort VOLLSTAENDIG (inkl. Antworttext/Body und Zuweisungen). Nutze das VOR update_standard_answer, wenn du den bestehenden Text brauchst, um ihn gezielt zu erweitern statt blind zu ueberschreiben — list_standard_answers liefert nur Name/Beschreibung, nicht den Body.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          standard_answer_id: { type: "string", description: "UUID der Standardantwort." }
+        },
+        required: ["standard_answer_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_standard_answer",
+      description:
+        "Legt eine NEUE Standardantwort an — eine vorformulierte Antwort-Vorlage fuer einen wiederkehrenden Anfragetyp. Der Mail-Agent setzt sie ein/passt sie an, wenn eine Anfrage zur 'description' (Trigger) passt. Fuer Faktenwissen → create_chunk. Fuer mehrschrittige Workflows → create_skill. Rufe IMMER zuerst list_standard_answers auf (Duplikate/Ueberlappung pruefen; ggf. update_standard_answer statt neu). Wird UNTER der aktiven Datenbank angelegt und NICHT automatisch einem Agenten zugewiesen — das Freischalten pro Mail-Agent passiert in der SupportAI-Konfiguration.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: {
+            type: "string",
+            description: "Kebab-case, 2–40 Zeichen, z.B. 'widerruf-bestaetigung'."
+          },
+          description: {
+            type: "string",
+            description:
+              "Trigger-Beschreibung (20–500 Zeichen): BEI WELCHEM Anfragetyp soll diese Standardantwort greifen? Eindeutig formulieren — das ist der Auslöser fuers Matching."
+          },
+          body: {
+            type: "string",
+            description: "Der Antworttext als Markdown (max. ~2000 Token)."
+          },
+          answer_mode: {
+            type: "string",
+            enum: ["adaptive", "verbatim"],
+            description:
+              "adaptive = der Agent passt die Vorlage an die konkrete Anfrage an (Standard). verbatim = die Vorlage wird woertlich uebernommen (fuer rechtlich/fachlich exakte Texte). Weglassen = adaptive."
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optionale Schlagworte."
+          },
+          knowledge_base_id: {
+            type: "string",
+            description:
+              "Optional: ID der Datenbank, unter der die Standardantwort liegen soll. Weglassen = aktuell aktive Datenbank; ohne aktive DB → firmenweit."
+          }
+        },
+        required: ["name", "description", "body"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_standard_answer",
+      description:
+        "Aktualisiert eine bestehende Standardantwort (Name/Beschreibung/Body/Tags/Modus). Nutze das, wenn list_standard_answers eine passende zeigt, die nur angepasst werden muss — statt eine zweite, ueberlappende anzulegen. Fuer gezielte Textaenderungen vorher get_standard_answer aufrufen. Erzeugt automatisch einen Versions-Snapshot.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          standard_answer_id: { type: "string", description: "UUID der zu ändernden Standardantwort." },
+          name: { type: "string", description: "Neuer Name (kebab-case), optional." },
+          description: { type: "string", description: "Neue Trigger-Beschreibung, optional." },
+          body: { type: "string", description: "Neuer Antworttext, optional." },
+          answer_mode: {
+            type: "string",
+            enum: ["adaptive", "verbatim"],
+            description: "Neuer Modus (adaptive/verbatim), optional."
+          },
+          tags: { type: "array", items: { type: "string" }, description: "Neue Tags, optional." },
+          change_summary: { type: "string", description: "Kurze Notiz, was geändert wurde (für die Historie)." }
+        },
+        required: ["standard_answer_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_standard_answer",
+      description:
+        "Loescht eine Standardantwort dauerhaft. NUR nach ausdruecklicher Bestaetigung des Users. Mit 'force': true auch loeschen, wenn sie noch einem Mail-Agenten zugewiesen ist.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          standard_answer_id: { type: "string", description: "UUID der Standardantwort." },
+          force: { type: "boolean", description: "true = auch loeschen, wenn noch zugewiesen. Default false." }
+        },
+        required: ["standard_answer_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "get_knowledge_overview",
       description:
         "Schnelle Themen-Landkarte einer Wissensdatenbank aus dem Wissensgraphen (Communities): welche Themen die KB abdeckt (nach Umfang sortiert), repräsentative Entitäten je Thema, Entity-Typ-Verteilung und Stand-Datum. Nutze das, um dich zu orientieren, BEVOR du gezielt suchst oder einen Fragenprompt erzeugst. Bei leerem Graph: Dokumentliste als Fallback.",

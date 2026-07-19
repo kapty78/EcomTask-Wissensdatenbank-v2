@@ -128,6 +128,7 @@ function extractEntityChange(toolName: string, result: any): EntityChange | null
     ["chunk", result.chunk?.id ?? result.chunk_id],
     ["fact", result.fact?.id ?? result.fact_id],
     ["knowledge_base", result.knowledge_base?.id ?? result.knowledge_base_id],
+    ["standard_answer", result.standard_answer?.id ?? result.standard_answer_id],
     [String(result.deleted?.type || "entity"), result.deleted?.id],
   ]
   // WP-B3: audit_id/Content-Hashes durchreichen, falls ein Tool sie liefert
@@ -2035,6 +2036,7 @@ const PARALLEL_SAFE_TOOLS = new Set<string>([
   "debug_knowledge_search", "search_kb_text", "search_chunks_by_text",
   "search_facts_by_text", "get_chunk_details", "get_knowledge_overview",
   "get_chunk_combine_suggestions", "list_skills", "verify_fact_findability",
+  "list_standard_answers", "get_standard_answer",
   "generate_question_prompt", "web_search", "analyze_attachment",
   "present_code_block", "present_table", "present_image", "present_interactive_choices",
 ])
@@ -2060,6 +2062,7 @@ const HISTORY_BUDGET_BY_TOOL: Record<string, number> = {
   search_kb_text: 16_000,
   list_documents: 16_000,
   list_skills: 24_000,
+  list_standard_answers: 24_000,
 }
 /** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
 const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
@@ -2296,6 +2299,131 @@ async function executeTool(params: {
         body: { agent_config_id: mailConfigId, enabled: true },
       })
       return { result: { assigned: true, assignment: data } } as ToolExecutionResult
+    }
+    // ── Standardantworten (Antwort-Vorlagen) — proxy auf denselben Skill-Service
+    //    (kind='standard_answer' in agent_skills), gleiche Auth wie Skills. ──
+    case "list_standard_answers": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Standardantworten nicht verfügbar.")
+      // Gleiches Vollstaendigkeits-Prinzip wie list_skills/list_documents:
+      // /api/standard-answers paginiert (max 100/Seite, next_cursor). Vollstaendig
+      // durchpaginieren und ein authoritatives complete/total-Signal liefern, damit
+      // der Agent nach EINEM Aufruf weiss, dass er alles hat (kein Re-List-Runaway).
+      const items: any[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < 50; page++) {
+        const data = await callSkillsApi({
+          method: "GET",
+          path: "/api/standard-answers",
+          companyId: defaultCompanyId,
+          query: { limit: "100", ...(cursor ? { cursor } : {}) },
+        })
+        const pageItems: any[] = Array.isArray(data?.items) ? data.items : []
+        items.push(...pageItems)
+        const next = typeof data?.next_cursor === "string" && data.next_cursor ? data.next_cursor : null
+        if (!next || pageItems.length === 0) break
+        cursor = next
+      }
+      const q = asOptionalString(args?.query)?.toLowerCase()
+      const filtered = q
+        ? items.filter((s: any) =>
+            `${s.name} ${s.description} ${(s.tags || []).join(" ")}`.toLowerCase().includes(q),
+          )
+        : items
+      return {
+        result: {
+          standard_answers: filtered,
+          count: filtered.length,
+          total: items.length,
+          complete: true, // vollstaendig durchpaginiert — das sind ALLE Standardantworten
+          ...(q
+            ? {
+                hinweis: `Auf "${q}" gefiltert (${filtered.length}/${items.length}). Ohne 'query' bekommst du in EINEM Aufruf alle Standardantworten — nicht mit anderen Begriffen erneut auflisten.`,
+              }
+            : {}),
+        },
+      } as ToolExecutionResult
+    }
+    case "get_standard_answer": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const answerId = asString(args?.standard_answer_id, "standard_answer_id")
+      const data = await callSkillsApi({
+        method: "GET",
+        path: `/api/standard-answers/${answerId}`,
+        companyId: defaultCompanyId,
+      })
+      return { result: { standard_answer: data } } as ToolExecutionResult
+    }
+    case "create_standard_answer": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Standardantwort kann nicht angelegt werden.")
+      const name = asString(args?.name, "name")
+      const description = asString(args?.description, "description")
+      const body = asString(args?.body, "body")
+      const tags = Array.isArray(args?.tags) ? args.tags.filter((t: any) => typeof t === "string") : []
+      // Nur den Nicht-Default explizit senden (Backend-Default ist "adaptive").
+      const answerMode = asOptionalString(args?.answer_mode) === "verbatim" ? "verbatim" : undefined
+      // Gehoert (organisatorisch) zu einer Datenbank: explizit oder aktive DB;
+      // ohne aktive DB → firmenweit (null).
+      const kbId = asOptionalString(args?.knowledge_base_id) || activeKnowledgeBaseId || null
+      const payload: any = { name, description, body, tags }
+      if (answerMode) payload.answer_mode = answerMode
+      if (kbId) payload.knowledge_base_id = kbId
+      const data = await callSkillsApi({
+        method: "POST",
+        path: "/api/standard-answers",
+        companyId: defaultCompanyId,
+        userId,
+        body: payload,
+      })
+      return {
+        result: {
+          created: true,
+          standard_answer: data?.standard_answer,
+          knowledge_base_id: kbId,
+          scope: kbId ? "datenbank" : "firmenweit",
+          next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
+          quality_check: data?.quality_check,
+          token_warnings: data?.token_warnings,
+        },
+      } as ToolExecutionResult
+    }
+    case "update_standard_answer": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const answerId = asString(args?.standard_answer_id, "standard_answer_id")
+      const patch: any = {}
+      if (asOptionalString(args?.name)) patch.name = args.name
+      if (asOptionalString(args?.description)) patch.description = args.description
+      if (asOptionalString(args?.body)) patch.body = args.body
+      if (Array.isArray(args?.tags)) patch.tags = args.tags.filter((t: any) => typeof t === "string")
+      const mode = asOptionalString(args?.answer_mode)
+      if (mode === "adaptive" || mode === "verbatim") patch.answer_mode = mode
+      if (asOptionalString(args?.change_summary)) patch.change_summary = args.change_summary
+      const data = await callSkillsApi({
+        method: "PATCH",
+        path: `/api/standard-answers/${answerId}`,
+        companyId: defaultCompanyId,
+        userId,
+        body: patch,
+      })
+      return {
+        result: {
+          updated: true,
+          standard_answer: data?.standard_answer,
+          token_warnings: data?.token_warnings,
+          quality_check: data?.quality_check,
+        },
+      } as ToolExecutionResult
+    }
+    case "delete_standard_answer": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const answerId = asString(args?.standard_answer_id, "standard_answer_id")
+      const force = args?.force === true
+      await callSkillsApi({
+        method: "DELETE",
+        path: `/api/standard-answers/${answerId}`,
+        companyId: defaultCompanyId,
+        ...(force ? { query: { force: "true" } } : {}),
+      })
+      return { result: { deleted: { type: "standard_answer", id: answerId } } } as ToolExecutionResult
     }
     case "web_search": {
       const query = asString(args?.query, "query")
