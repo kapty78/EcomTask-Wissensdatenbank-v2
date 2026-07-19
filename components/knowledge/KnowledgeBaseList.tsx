@@ -407,7 +407,7 @@ export const KnowledgeBaseList: FC<KnowledgeBaseListProps> = ({
       {!isCreating && (
         <button
           onClick={handleCreateNew}
-          className="w-full rounded-lg border border-primary/55 bg-primary px-4 py-2.5 text-sm text-foreground font-medium hover:bg-pink-600 transition-colors"
+          className="w-full rounded-lg border border-primary/55 bg-primary px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-pink-600"
           disabled={loading}
         >
           + Neue Datenbank

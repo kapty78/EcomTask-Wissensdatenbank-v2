@@ -14,7 +14,8 @@ export const metadata: Metadata = {
   title: "AI-Mitarbeiter Wissensdatenbank",
   description: "Wissensdatenbank für Ihren Kundensupport",
   icons: {
-    icon: "/favicon.svg"
+    icon: "/favicon.png",
+    apple: "/apple-icon.png"
   }
 }
 

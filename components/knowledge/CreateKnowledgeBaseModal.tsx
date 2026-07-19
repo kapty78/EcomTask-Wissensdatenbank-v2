@@ -195,7 +195,7 @@ export const CreateKnowledgeBaseModal: FC<CreateKnowledgeBaseModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="flex items-center rounded-md bg-pink-500 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all duration-200 hover:bg-pink-600 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center rounded-md bg-pink-500 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all duration-200 hover:bg-pink-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>

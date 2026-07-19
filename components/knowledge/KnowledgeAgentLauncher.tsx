@@ -22,6 +22,16 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu"
 import { playClick, playError, playSuccess, playWarning, playWorking } from "@/lib/sounds"
+// Geteilte SupportAI-Chat-Render-Engine (portiert nach components/agent-chat/*).
+// Rendert Assistant-Antworten identisch zu den SupportAI-Agent-Chats:
+// Tool-Trace, Rich-Blocks (Text/Code/Tabelle/Bild/Choices …), Markdown,
+// Details-Gruppierung. WDBs Streaming/Backend/Referenzen bleiben unberührt.
+import {
+  AssistantMessageBody,
+  useTableSelection,
+  useChoiceSelection,
+  useFormState,
+} from "@/components/agent-chat"
 
 const KB_EVENT_NAME = "knowledge-base:changed"
 const AGENT_REFERENCE_EVENT = "knowledge-agent:open-reference"
@@ -425,6 +435,12 @@ export default function KnowledgeAgentLauncher({ userName, variant = "inline" }:
   const [submittingChoiceId, setSubmittingChoiceId] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [isUploading, setIsUploading] = useState(false)
+
+  // Interaktions-State der geteilten Rich-Block-Renderer (Tabellen-Auswahl,
+  // Choice-Auswahl, Formular-State) — von AssistantMessageBody erwartet.
+  const tableSelection = useTableSelection()
+  const choiceSelection = useChoiceSelection()
+  const formState = useFormState()
 
   const closeTimerRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1572,342 +1588,25 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
     await submitInput()
   }
 
-  const renderRichBlock = (block: AgentRichBlock, blockIndex: number, messageId: string) => {
-    if (block.type === "text") {
-      return (
-        <div key={`text-${blockIndex}`} className="text-[13px] leading-[1.7] text-white/75">
-          <MarkdownMessage content={block.text} />
-        </div>
-      )
-    }
 
-    if (block.type === "code") {
-      return (
-        <div key={`code-${blockIndex}`} className="rounded-xl border border-white/[0.06] bg-[#0d0d0f] overflow-hidden">
-          {(block.title || block.language) && (
-            <div className="flex items-center justify-between border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <span className="truncate">{block.title || "Code"}</span>
-              <span>{block.language || "text"}</span>
-            </div>
-          )}
-          <pre className="max-h-64 overflow-auto p-2.5 text-[12px] leading-relaxed text-white/70">
-            <code>{block.content}</code>
-          </pre>
-        </div>
-      )
-    }
-
-    if (block.type === "table") {
-      return (
-        <div key={`table-${blockIndex}`} className="rounded-xl border border-white/[0.06] bg-[#0d0d0f]/80 overflow-hidden shadow-sm [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          {block.title && (
-            <div className="border-b border-white/[0.06] bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-white/70">
-              {block.title}
-            </div>
-          )}
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent border-white/[0.06]">
-                {block.columns.map((column, columnIndex) => (
-                  <TableHead
-                    key={`${column}-${columnIndex}`}
-                    className="text-[12px] font-semibold text-white/50"
-                  >
-                    {column}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {block.rows.map((row, rowIndex) => (
-                <TableRow key={`row-${rowIndex}`} className="border-white/[0.04]">
-                  {row.map((cell, cellIndex) => (
-                    <TableCell key={`cell-${rowIndex}-${cellIndex}`} className="text-[12px] text-white/70 py-2">
-                      {cell}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )
-    }
-
-    if (block.type === "image") {
-      return (
-        <figure key={`image-${blockIndex}`} className="overflow-hidden rounded-md border border-white/[0.06] bg-white/[0.02]">
-          {block.title && (
-            <figcaption className="border-b border-white/[0.06] px-2.5 py-1.5 text-[12px] font-medium text-white/70">
-              {block.title}
-            </figcaption>
-          )}
-          <img
-            src={block.url}
-            alt={block.alt || block.title || "Agent-Bild"}
-            className="max-h-80 w-full object-contain bg-muted/30"
-            loading="lazy"
-          />
-        </figure>
-      )
-    }
-
-    if (block.type === "interactive_choices") {
-      const blockKey = `${messageId}:${blockIndex}`
-      const options = Array.isArray(block.options)
-        ? block.options.filter(option => !!option?.id && !!option?.label).slice(0, 12)
-        : []
-      if (options.length < 2) return null
-
-      const selectionMode: "single" | "multiple" | "either_or" =
-        block.selectionMode === "multiple"
-          ? "multiple"
-          : block.selectionMode === "either_or"
-            ? "either_or"
-            : "single"
-      const isMultiSelect = selectionMode === "multiple"
-      const selectedIds = choiceSelections[blockKey] || []
-
-      const minSelectionsRaw = typeof block.minSelections === "number" ? Math.round(block.minSelections) : 1
-      const maxSelectionsRaw = typeof block.maxSelections === "number" ? Math.round(block.maxSelections) : (isMultiSelect ? options.length : 1)
-      const minSelections = Math.max(0, Math.min(options.length, minSelectionsRaw))
-      const maxSelections = Math.max(minSelections || 1, Math.min(options.length, maxSelectionsRaw))
-
-      const choiceError = choiceErrors[blockKey] || null
-      const isSubmitting = submittingChoiceId === blockKey
-
-      const selectedLabels = options
-        .filter(option => selectedIds.includes(option.id))
-        .map(option => option.label)
-
-      const toggleChoice = (optionId: string) => {
-        setChoiceErrors(prev => ({
-          ...prev,
-          [blockKey]: null
-        }))
-
-        setChoiceSelections(prev => {
-          const current = prev[blockKey] || []
-
-          if (!isMultiSelect) {
-            return {
-              ...prev,
-              [blockKey]: [optionId]
-            }
-          }
-
-          const hasOption = current.includes(optionId)
-          if (hasOption) {
-            return {
-              ...prev,
-              [blockKey]: current.filter(id => id !== optionId)
-            }
-          }
-
-          if (current.length >= maxSelections) {
-            setChoiceErrors(prevErrors => ({
-              ...prevErrors,
-              [blockKey]: `Maximal ${maxSelections} Auswahl${maxSelections === 1 ? "" : "en"} möglich.`
-            }))
-            return prev
-          }
-
-          return {
-            ...prev,
-            [blockKey]: [...current, optionId]
-          }
-        })
-      }
-
-      const submitChoice = async () => {
-        if (isThinking || isSubmitting) return
-
-        const count = selectedIds.length
-        if (count < minSelections) {
-          setChoiceErrors(prev => ({
-            ...prev,
-            [blockKey]: `Bitte mindestens ${minSelections} Option${minSelections === 1 ? "" : "en"} wählen.`
-          }))
-          return
-        }
-        if (count > maxSelections) {
-          setChoiceErrors(prev => ({
-            ...prev,
-            [blockKey]: `Bitte maximal ${maxSelections} Option${maxSelections === 1 ? "" : "en"} wählen.`
-          }))
-          return
-        }
-
-        const responsePrefix = (block.responsePrefix || "Auswahl").trim()
-        const responseMessage = `${responsePrefix}: ${selectedLabels.join(", ")}`
-
-        setSubmittingChoiceId(blockKey)
-        try {
-          await submitUserMessage(responseMessage, responseMessage)
-        } finally {
-          setSubmittingChoiceId(current => (current === blockKey ? null : current))
-        }
-      }
-
-      const submitDisabled = isThinking || isSubmitting || selectedIds.length < minSelections
-      const submitLabel =
-        block.submitLabel ||
-        (isMultiSelect ? "Auswahl senden" : selectionMode === "either_or" ? "Entscheidung senden" : "Option senden")
-
-      return (
-        <div key={`interactive-${blockKey}`} className="rounded-xl border border-white/[0.06] bg-gradient-to-br from-white/[0.03] to-transparent p-3 space-y-2.5">
-          {block.title && (
-            <div className="text-[12px] font-medium text-white/80">{block.title}</div>
-          )}
-          <div className="text-[13px] leading-[1.7] text-white/75">
-            <MarkdownMessage content={block.prompt} />
-          </div>
-          <div className="space-y-1.5">
-            {options.map(option => {
-              const isSelected = selectedIds.includes(option.id)
-              return (
-                <button
-                  key={`${blockKey}-${option.id}`}
-                  type="button"
-                  onClick={() => toggleChoice(option.id)}
-                  className={`w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-200 ${
-                    isSelected
-                      ? "border-pink-500/20 bg-gradient-to-r from-pink-500/[0.06] to-transparent text-white/80"
-                      : "border-white/[0.06] bg-white/[0.02] text-white/55 hover:border-white/[0.1] hover:text-white/75 hover:bg-white/[0.03]"
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span
-                      className={`mt-[1px] inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border transition-all duration-200 ${
-                        isSelected ? "border-pink-400/70 bg-pink-500/80" : "border-white/20"
-                      }`}
-                    >
-                      {isSelected ? <Check className="size-2.5 text-white" /> : null}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[13px] leading-relaxed text-white/80">{option.label}</span>
-                      {option.description && (
-                        <span className="block text-[10.5px] text-muted-foreground mt-0.5">{option.description}</span>
-                      )}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-            <div className="text-[10.5px] text-muted-foreground">
-              {isMultiSelect
-                ? `${selectedIds.length} gewählt · min ${minSelections}, max ${maxSelections}`
-                : selectedIds.length > 0
-                  ? "1 Auswahl gesetzt"
-                  : "Bitte eine Option wählen"}
-            </div>
-            <button
-              type="button"
-              onClick={submitChoice}
-              disabled={submitDisabled}
-              className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-foreground transition-colors hover:border-white/30 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSubmitting ? <Loader2 className="size-3 animate-spin" /> : <ArrowDown className="size-3" />}
-              <span>{submitLabel}</span>
-            </button>
-          </div>
-          {choiceError && (
-            <div className="text-[10.5px] text-muted-foreground">{choiceError}</div>
-          )}
-        </div>
-      )
-    }
-
-    return null
-  }
-
-  const renderAssistantBody = (message: ChatMessage) => {
-    if (Array.isArray(message.toolActivities) && message.toolActivities.length > 0) {
-      return (
-        <div className="space-y-2">
-          {message.toolActivities.map(activity => {
-            const isExpanded = !!expandedToolIds[activity.id]
-            const hasDetails =
-              (activity.details?.lines && activity.details.lines.length > 0) ||
-              (activity.details?.links && activity.details.links.length > 0)
-            return (
-              <div
-                key={activity.id}
-                className={`rounded-xl border px-3 py-2.5 text-xs text-muted-foreground transition-all duration-300 ${
-                  activity.status === "running"
-                    ? "border-white/[0.08] bg-gradient-to-r from-white/[0.04] to-transparent"
-                    : activity.status === "error"
-                      ? "border-red-500/15 bg-red-500/[0.03]"
-                      : "border-white/[0.05] bg-white/[0.015]"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() =>
-                    hasDetails &&
-                    setExpandedToolIds(prev => ({
-                      ...prev,
-                      [activity.id]: !prev[activity.id]
-                    }))
-                  }
-                  className="flex w-full items-center gap-2 text-left"
-                >
-                  <Wrench className={`size-3 ${activity.status === "running" ? "text-pink-400 agent-tool-pulse" : "text-pink-500"}`} />
-                  <span className="truncate">{activity.label}</span>
-                  <span className="ml-auto flex items-center">
-                    {activity.status === "running" ? (
-                      <span className="flex items-center gap-1">
-                        <span className="agent-thinking-dot inline-block size-1 rounded-full bg-pink-400/50" />
-                        <span className="agent-thinking-dot inline-block size-1 rounded-full bg-pink-400/50" />
-                        <span className="agent-thinking-dot inline-block size-1 rounded-full bg-pink-400/50" />
-                      </span>
-                    ) : activity.status === "done" ? <Check className="size-3.5 text-pink-500" /> : <span className="text-red-400 text-[10px]">Fehler</span>}
-                  </span>
-                </button>
-                {hasDetails && isExpanded && (
-                  <div className="mt-2 space-y-1.5 border-t border-white/[0.06] pt-2">
-                    {(activity.details?.lines || []).map((line, index) => (
-                      <div key={`${activity.id}-line-${index}`} className="text-[11px] text-muted-foreground">
-                        {line}
-                      </div>
-                    ))}
-                    {(activity.details?.links || []).map((link, index) => (
-                      <a
-                        key={`${activity.id}-link-${index}`}
-                        href={link.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block truncate text-[11px] text-foreground/80 underline underline-offset-2"
-                      >
-                        {link.title}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )
-    }
-
-    const richContent = message.richContent
-    const blocks = Array.isArray(richContent?.blocks) ? richContent.blocks : []
-    const references = Array.isArray(richContent?.references) ? richContent.references : []
-
-    if (blocks.length === 0 && references.length === 0) {
-      return (
-        <div className="text-[13px] leading-[1.7] text-white/75">
-          <MarkdownMessage content={message.content} />
-        </div>
-      )
-    }
+  const renderAssistantBody = (message: ChatMessage, isLatest: boolean) => {
+    const references = Array.isArray(message.richContent?.references) ? message.richContent.references : []
 
     return (
       <div className="space-y-2.5">
-        {blocks.map((block, index) => renderRichBlock(block, index, message.id))}
+        {/* Geteilte SupportAI-Render-Engine: Tool-Trace + Rich-Blocks + Markdown,
+            identisch zu den beiden SupportAI-Agent-Chats. WDBs Nachrichtenmodell
+            ist strukturell zu ChatMessage kompatibel. */}
+        <AssistantMessageBody
+          message={message}
+          tableSelection={tableSelection}
+          choiceSelection={choiceSelection}
+          formState={formState}
+          isThinking={isThinking}
+          isLatestMessage={isLatest}
+          conversationId={conversationId}
+          onSubmitMessage={(msg) => submitUserMessage(msg)}
+        />
         {references.length > 0 && (
           <div className="flex flex-wrap gap-1.5 pt-0.5">
             {references.slice(0, 12).map((reference, index) => (
@@ -2020,7 +1719,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
       {/* Global file inputs - always mounted so refs work in both trigger and portal */}
       <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_TYPES} className="hidden"
         onChange={e => { if (e.target.files) handleFileSelect(e.target.files); e.target.value = "" }} />
-      <input id="agent-folder-input" type="file" multiple webkitdirectory="" className="hidden"
+      <input id="agent-folder-input" type="file" multiple {...({ webkitdirectory: "" } as Record<string, string>)} className="hidden"
         onChange={e => { if (e.target.files) handleFileSelect(e.target.files); e.target.value = "" }} />
 
       {/* Floating Action Button for mobile variant */}
@@ -2526,7 +2225,7 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
                           </div>
                         ) : (
                           <div className="w-full text-left">
-                            {renderAssistantBody(message)}
+                            {renderAssistantBody(message, renderedIndex === 0)}
                           </div>
                         )}
                       </div>

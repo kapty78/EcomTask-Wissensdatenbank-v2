@@ -6,6 +6,8 @@ import { getSupabaseClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Search, Loader2 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getSavedCompany, resolveUserCompany } from '@/lib/domain-manager'
 
 interface SearchResult {
@@ -439,17 +441,12 @@ export default function ChatInterface({ knowledgeBaseId, height = "600px", onOpe
                         {result.chunk_content && (
                           <div className="mt-3 pt-3 border-t border-[#333333]">
                             <p className="text-[9px] text-gray-500 mb-1"> Vorschau Chunk:</p>
-                            <div className="text-[10px] text-gray-400 line-clamp-2 leading-relaxed [&_strong]:font-bold [&_em]:italic">
-                              {(() => {
-                                const processedContent = result.chunk_content
-                                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                  .replace(/\*(.*?)\*/g, '<em>$1</em>');
-                                console.log('Original:', result.chunk_content);
-                                console.log('Processed:', processedContent);
-                                return (
-                                  <div dangerouslySetInnerHTML={{ __html: processedContent }} />
-                                );
-                              })()}
+                            <div className="text-[10px] text-gray-400 line-clamp-2 leading-relaxed [&_strong]:font-bold [&_em]:italic [&_p]:m-0">
+                              {/* Sichere Markdown-Vorschau: react-markdown escaped HTML.
+                                  Ersetzt Regex + dangerouslySetInnerHTML (XSS-Risiko). */}
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {result.chunk_content}
+                              </ReactMarkdown>
                             </div>
                           </div>
                         )}

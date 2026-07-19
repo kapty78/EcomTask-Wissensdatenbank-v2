@@ -46,10 +46,16 @@ const ServerEnvSchema = z.object({
 
   // — Kern-Secrets (Pflicht) —
   OPENAI_API_KEY: z.string().min(20),
+  // Optional im globalen Schema, damit nicht-agentische Builds/Tests ohne
+  // Scaleway laufen. Der Knowledge-Agent selbst prueft den Key fail-fast.
+  SCALEWAY_API_KEY: z.string().min(20).optional(),
+  SCALEWAY_BASE_URL: z.string().url().default("https://api.scaleway.ai/v1"),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
 
-  // — Modell-Auswahl (Legacy-Kette siehe buildServerEnv) —
-  KNOWLEDGE_AGENT_MODEL: z.string().min(1).default("gpt-5.6-terra"),
+  // — Modell-Auswahl: Hauptagent fest ueber Scaleway, OpenAI nur fuer
+  // Hilfspfade wie Vision, native Websuche und Fragenprompt-Generierung. —
+  KNOWLEDGE_AGENT_MODEL: z.string().min(1).default("glm-5.2"),
+  KNOWLEDGE_AGENT_AUX_MODEL: z.string().min(1).default("gpt-4.1"),
 })
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>
@@ -64,9 +70,10 @@ export function buildServerEnv(
   for (const [key, value] of Object.entries(source)) {
     merged[key] = value?.trim() === "" ? undefined : value
   }
-  // Legacy-Kette: KNOWLEDGE_AGENT_MODEL ?? OPENAI_MODEL ?? Schema-Default.
-  if (!merged.KNOWLEDGE_AGENT_MODEL && merged.OPENAI_MODEL) {
-    merged.KNOWLEDGE_AGENT_MODEL = merged.OPENAI_MODEL
+  // Legacy OPENAI_MODEL darf nur noch OpenAI-Hilfspfade beeinflussen. Der
+  // Hauptagent bleibt auch in alten Deployments sicher auf Scaleway/GLM.
+  if (!merged.KNOWLEDGE_AGENT_AUX_MODEL && merged.OPENAI_MODEL) {
+    merged.KNOWLEDGE_AGENT_AUX_MODEL = merged.OPENAI_MODEL
   }
   // Legacy-Alias: Pipeline-Auth lief frueher ueber die NEXT_PUBLIC_-Variante.
   // Deployments, die nur den alten Namen gesetzt haben, bleiben funktionsfaehig.

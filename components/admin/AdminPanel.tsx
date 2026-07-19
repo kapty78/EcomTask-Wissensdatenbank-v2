@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AlertTriangle, ShieldCheck, ArrowLeft, Building2 } from 'lucide-react';
+import { LogoSpinner } from '@/components/DynamicLogo';
 import { User } from '@supabase/supabase-js';
 import { UserPermission } from './types';
 import { useAdminUsers } from './hooks/useAdminUsers';
@@ -152,14 +153,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/wissensdatenbank-logo-v2.png"
-          alt=""
-          aria-hidden
-          className="size-10 animate-pulse select-none"
-          draggable={false}
-        />
+        <LogoSpinner size={40} className="select-none" />
         <span className="text-xs text-muted-foreground">Lade Benutzer…</span>
       </div>
     );
