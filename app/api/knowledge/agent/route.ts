@@ -127,8 +127,10 @@ function extractEntityChange(toolName: string, result: any): EntityChange | null
     ["document", result.document?.id ?? result.document_id],
     ["chunk", result.chunk?.id ?? result.chunk_id],
     ["fact", result.fact?.id ?? result.fact_id],
-    ["knowledge_base", result.knowledge_base?.id ?? result.knowledge_base_id],
+    // Spezifische Entitaeten VOR knowledge_base pruefen: eine KB-ID im Result ist
+    // oft nur Kontext (z.B. "angelegt unter DB X"), nicht die geaenderte Entitaet.
     ["standard_answer", result.standard_answer?.id ?? result.standard_answer_id],
+    ["knowledge_base", result.knowledge_base?.id ?? result.knowledge_base_id],
     [String(result.deleted?.type || "entity"), result.deleted?.id],
   ]
   // WP-B3: audit_id/Content-Hashes durchreichen, falls ein Tool sie liefert
@@ -2378,7 +2380,11 @@ async function executeTool(params: {
         result: {
           created: true,
           standard_answer: data?.standard_answer,
-          knowledge_base_id: kbId,
+          // Bewusst NICHT `knowledge_base_id` auf Top-Level: das kollidiert im
+          // generischen extractEntityChange mit dem knowledge_base-Candidate und
+          // wuerde den Create faelschlich der KB (statt der Standardantwort)
+          // zuschreiben. Die KB steht ohnehin in `standard_answer.knowledge_base_id`.
+          saved_under_kb: kbId,
           scope: kbId ? "datenbank" : "firmenweit",
           next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
           quality_check: data?.quality_check,
