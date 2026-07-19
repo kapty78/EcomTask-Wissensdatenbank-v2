@@ -2550,17 +2550,33 @@ async function executeTool(params: {
         throw new Error(`Keine Wissensdatenbank passend zu "${searchName}" gefunden.`)
       }
 
-      if (candidates.length > 1) {
+      // Exakter (case-insensitive) Namenstreffer gewinnt: "Support Mail" darf
+      // NICHT als mehrdeutig gelten, nur weil "Support Mail 2" den Teilstring
+      // ebenfalls enthaelt (die Suche ist ein Substring-ilike). Sonst lieferte
+      // set_active_knowledge_base faelschlich multiple_matches und der GANZE
+      // Lauf wurde ok:false — obwohl die KB eindeutig bestimmbar war.
+      const exactMatches = candidates.filter(
+        (kb: any) => String(kb.name || "").trim().toLowerCase() === searchName.trim().toLowerCase()
+      )
+      const resolved = exactMatches.length === 1 ? exactMatches : candidates
+
+      if (resolved.length > 1) {
+        // Echte Mehrdeutigkeit ist KEIN Fehlschlag, sondern eine Rueckfrage.
+        // NICHT success:false zurueckgeben (das markiert den gesamten Lauf als
+        // fehlgeschlagen) — stattdessen ein klarer Disambiguierungs-Hinweis,
+        // damit der Agent gezielt per knowledge_base_id nachlegt.
         return {
           result: {
-            success: false,
+            success: true,
+            needs_disambiguation: true,
             reason: "multiple_matches",
-            candidates: candidates.map((kb: any) => ({ id: kb.id, name: kb.name }))
+            hinweis: `Mehrere Datenbanken passen zu "${searchName}". Rufe set_active_knowledge_base erneut mit der passenden knowledge_base_id auf.`,
+            candidates: resolved.map((kb: any) => ({ id: kb.id, name: kb.name }))
           }
         } as ToolExecutionResult
       }
 
-      const kb = candidates[0]
+      const kb = resolved[0]
       return {
         result: {
           success: true,
