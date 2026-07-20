@@ -4,6 +4,7 @@ import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
 import { streamScalewayKnowledgeAgent } from "@/lib/knowledge-agent/scaleway-stream"
+import { streamAgentResponses } from "@/lib/knowledge-agent/responses-stream"
 import { resolveSkillName } from "@/lib/knowledge-agent/skill-name"
 
 import { Database } from "@/supabase/types"
@@ -262,6 +263,22 @@ const openai = new OpenAI({
 })
 const AGENT_MODEL = env.KNOWLEDGE_AGENT_MODEL
 const AUX_MODEL = env.KNOWLEDGE_AGENT_AUX_MODEL
+const AGENT_PROVIDER = env.KNOWLEDGE_AGENT_PROVIDER
+
+/** Provider-neutraler Haupt-Stream: OpenAI/Responses (Terra) oder Scaleway/Chat. */
+function streamKnowledgeAgent(params: {
+  model: string
+  messages: any[]
+  tools?: any
+  toolChoice?: any
+  signal?: AbortSignal
+  reasoningEffort?: any
+}) {
+  if (AGENT_PROVIDER === "scaleway") {
+    return streamScalewayKnowledgeAgent(getScalewayClient(), params)
+  }
+  return streamAgentResponses(openai, params)
+}
 let scalewayClient: OpenAI | null = null
 
 function getScalewayClient(): OpenAI {
@@ -345,16 +362,29 @@ async function runConsult(params: {
 }): Promise<string> {
   const { message, companyId, serviceClient } = params
   const bestand = await loadConsultContext(serviceClient, companyId)
+  const messages = [
+    { role: "system", content: CONSULT_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `## Bestand\n${bestand}\n\n## Anliegen des Chef-Agenten\n${message}`,
+    },
+  ]
+  if (AGENT_PROVIDER === "openai") {
+    let text = ""
+    for await (const chunk of streamAgentResponses(openai, {
+      model: AGENT_MODEL,
+      messages,
+      reasoningEffort: "low",
+    })) {
+      const delta = chunk.choices?.[0]?.delta?.content
+      if (delta) text += delta
+    }
+    return text.trim().slice(0, CONSULT_MAX_TOKENS * 8)
+  }
   const response = await getScalewayClient().chat.completions.create({
     model: AGENT_MODEL,
     max_tokens: CONSULT_MAX_TOKENS,
-    messages: [
-      { role: "system", content: CONSULT_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `## Bestand\n${bestand}\n\n## Anliegen des Chef-Agenten\n${message}`,
-      },
-    ],
+    messages,
   })
   return (response.choices?.[0]?.message?.content || "").trim()
 }
@@ -380,25 +410,34 @@ async function emitKickoffTextFromModel(params: {
 }) {
   const { emit, message, attachmentCount, signal } = params
   try {
-    const kickoffStream = await getScalewayClient().chat.completions.create(
+    const kickoffMessages = [
       {
-        model: AGENT_MODEL,
-        stream: true,
-        max_tokens: 200,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Schreibe genau eine sehr kurze Live-Startzeile auf Deutsch (max. 12 Woerter), was du jetzt tust. Keine Begruessung, keine Liste, kein Markdown-Heading."
-          },
-          {
-            role: "user",
-            content: `Anfrage: ${clip(message, 220)}${attachmentCount > 0 ? ` (mit ${attachmentCount} Anhang${attachmentCount > 1 ? "en" : ""})` : ""}`
-          }
-        ]
+        role: "system",
+        content:
+          "Schreibe genau eine sehr kurze Live-Startzeile auf Deutsch (max. 12 Woerter), was du jetzt tust. Keine Begruessung, keine Liste, kein Markdown-Heading."
       },
-      { signal }
-    )
+      {
+        role: "user",
+        content: `Anfrage: ${clip(message, 220)}${attachmentCount > 0 ? ` (mit ${attachmentCount} Anhang${attachmentCount > 1 ? "en" : ""})` : ""}`
+      }
+    ]
+    const kickoffStream =
+      AGENT_PROVIDER === "openai"
+        ? streamAgentResponses(openai, {
+            model: AGENT_MODEL,
+            messages: kickoffMessages,
+            reasoningEffort: "low",
+            signal,
+          })
+        : await getScalewayClient().chat.completions.create(
+            {
+              model: AGENT_MODEL,
+              stream: true,
+              max_tokens: 200,
+              messages: kickoffMessages,
+            },
+            { signal }
+          )
 
     let emitted = false
     for await (const chunk of kickoffStream) {
@@ -5279,7 +5318,7 @@ async function runAgentWorkflow(params: {
     // =====================================================================
     // STREAMING: Scaleway/GLM-5.2 mit OpenAI-kompatiblen Chat-Chunks.
     // =====================================================================
-    const stream = streamScalewayKnowledgeAgent(getScalewayClient(), {
+    const stream = streamKnowledgeAgent( {
       model: AGENT_MODEL,
       messages: conversation,
       tools: KNOWLEDGE_AGENT_TOOLS as any,
@@ -5628,7 +5667,7 @@ async function runAgentWorkflow(params: {
     // Call (das Weglassen ist gegen den Prod-Account nicht verifizierbar —
     // siehe Support AI route.ts, gleiche Begruendung). 25s-Deckel, damit die
     // Finalize-Reserve haelt.
-    const synthStream = streamScalewayKnowledgeAgent(getScalewayClient(), {
+    const synthStream = streamKnowledgeAgent( {
       model: AGENT_MODEL,
       messages: conversation,
       tools: KNOWLEDGE_AGENT_TOOLS as any,
