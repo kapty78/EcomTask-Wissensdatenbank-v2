@@ -5134,7 +5134,12 @@ async function runAgentWorkflow(params: {
     if (round > 0) {
       const remainingS = Math.max(0, Math.round((deadlineMs - elapsedMs) / 1000))
       conversation.push({
-        role: "system",
+        // role=user, NICHT system: eine system-Nachricht MITTEN im Verlauf (also
+        // nach tool-Nachrichten) lehnen strengere Provider hart ab — Mistral
+        // antwortet mit "400 Unexpected role 'system' after role 'tool'". GLM war
+        // hier tolerant, weshalb es lange nicht auffiel. system gehoert an den
+        // Anfang; laufende Steuerung ist eine user-Nachricht (provider-neutral).
+        role: "user",
         content: `BUDGET: Runde ${round + 1}/${maxToolRounds}, noch ~${remainingS}s. Priorisiere Abschluss. Verifikation BATCHEN (eine Pruefung nach allen Schreibschritten, nicht pro Schritt). Unabhaengige Tool-Calls in EINER Antwort buendeln.`,
       })
     }
@@ -5477,7 +5482,9 @@ async function runAgentWorkflow(params: {
   // einen verwertbaren Zustandsbericht statt eines Ratespiels.
   const exitCode = budgetExhausted ? "WDB_DEADLINE" : "MAX_ROUNDS"
   conversation.push({
-    role: "system",
+    // role=user statt system — siehe Begruendung beim BUDGET-Hinweis oben:
+    // system nach tool ist bei strengeren Providern ein harter 400er.
+    role: "user",
     content: budgetExhausted
       ? "ZEITBUDGET ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist."
       : "RUNDEN-LIMIT ERREICHT. Formuliere JETZT eine praezise deutsche Abschlussantwort: (1) welche Aenderungen wurden GESICHERT geschrieben (mit Chunk-/Dokument-IDs), (2) was wurde verifiziert, (3) was ist noch OFFEN. Rufe KEINE weiteren Tools auf. Behaupte NICHTS als erledigt, was nicht per Tool-Ergebnis belegt ist.",
