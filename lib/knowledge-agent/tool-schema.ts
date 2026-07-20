@@ -1109,6 +1109,11 @@ export const KNOWLEDGE_AGENT_TOOLS = [
             type: "string",
             description:
               "Optional: ID der Datenbank, unter der die Skill liegen soll. Weglassen = aktuell aktive Datenbank. Nur setzen, wenn die Skill bewusst zu einer anderen oder zu KEINER (firmenweit) Datenbank gehören soll."
+          },
+          ack: {
+            type: "boolean",
+            description:
+              "Nur im ZWEITEN Anlauf setzen: Wenn der Qualitaetspruefer den ersten Versuch mit einer Ueberschneidung abgelehnt hat UND die Ueberschneidung beabsichtigt ist (typisch beim ZUSAMMENFUEHREN mehrerer Eintraege zu einem), denselben Aufruf mit ack: true wiederholen und die Absicht begruenden. NICHT benutzen, um echte Dubletten durchzudruecken \u2014 dann lieber den bestehenden Eintrag erweitern."
           }
         },
         required: ["name", "description", "body"]
@@ -1130,7 +1135,12 @@ export const KNOWLEDGE_AGENT_TOOLS = [
           description: { type: "string", description: "Neue Trigger-Beschreibung, optional." },
           body: { type: "string", description: "Neuer Workflow-Body, optional." },
           tags: { type: "array", items: { type: "string" }, description: "Neue Tags, optional." },
-          change_summary: { type: "string", description: "Kurze Notiz, was geändert wurde (für die Historie)." }
+          change_summary: { type: "string", description: "Kurze Notiz, was geändert wurde (für die Historie)." },
+          ack: {
+            type: "boolean",
+            description:
+              "Nur im ZWEITEN Anlauf setzen: Wenn der Qualitaetspruefer den ersten Versuch mit einer Ueberschneidung abgelehnt hat UND die Ueberschneidung beabsichtigt ist (typisch beim ZUSAMMENFUEHREN mehrerer Eintraege zu einem), denselben Aufruf mit ack: true wiederholen und die Absicht begruenden. NICHT benutzen, um echte Dubletten durchzudruecken \u2014 dann lieber den bestehenden Eintrag erweitern."
+          }
         },
         required: ["skill_id"]
       }
@@ -1242,6 +1252,11 @@ export const KNOWLEDGE_AGENT_TOOLS = [
             type: "string",
             description:
               "Optional: ID der Datenbank, unter der die Standardantwort liegen soll. Weglassen = aktuell aktive Datenbank; ohne aktive DB → firmenweit."
+          },
+          ack: {
+            type: "boolean",
+            description:
+              "Nur im ZWEITEN Anlauf setzen: Wenn der Qualitaetspruefer den ersten Versuch mit einer Ueberschneidung abgelehnt hat UND die Ueberschneidung beabsichtigt ist (typisch beim ZUSAMMENFUEHREN mehrerer Eintraege zu einem), denselben Aufruf mit ack: true wiederholen und die Absicht begruenden. NICHT benutzen, um echte Dubletten durchzudruecken \u2014 dann lieber den bestehenden Eintrag erweitern."
           }
         },
         required: ["name", "description", "body"]
@@ -1268,7 +1283,12 @@ export const KNOWLEDGE_AGENT_TOOLS = [
             description: "Neuer Modus (adaptive/verbatim), optional."
           },
           tags: { type: "array", items: { type: "string" }, description: "Neue Tags, optional." },
-          change_summary: { type: "string", description: "Kurze Notiz, was geändert wurde (für die Historie)." }
+          change_summary: { type: "string", description: "Kurze Notiz, was geändert wurde (für die Historie)." },
+          ack: {
+            type: "boolean",
+            description:
+              "Nur im ZWEITEN Anlauf setzen: Wenn der Qualitaetspruefer den ersten Versuch mit einer Ueberschneidung abgelehnt hat UND die Ueberschneidung beabsichtigt ist (typisch beim ZUSAMMENFUEHREN mehrerer Eintraege zu einem), denselben Aufruf mit ack: true wiederholen und die Absicht begruenden. NICHT benutzen, um echte Dubletten durchzudruecken \u2014 dann lieber den bestehenden Eintrag erweitern."
+          }
         },
         required: ["standard_answer_id"]
       }

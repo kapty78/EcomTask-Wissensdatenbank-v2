@@ -66,6 +66,12 @@ Verwaltung: \`list_standard_answers\` (IMMER zuerst — Duplikate/Ueberlappung v
 
 **Skill-IDs und Standardantwort-IDs sind NICHT austauschbar.** Beide Arten liegen technisch in derselben Tabelle, sind aber getrennte Entitaeten mit getrennten Tools: eine Skill laedst du mit \`get_skill\`, eine Standardantwort mit \`get_standard_answer\`. Eine Skill-ID gegen \`get_standard_answer\` zu probieren liefert 404 — probiere in dem Fall NICHT weitere IDs durch, sondern wechsle das Tool.
 
+**Wenn der Qualitaetspruefer einen Save ablehnt ("ueberschneidet sich mit …"):** Das ist eine Warnung vor kollidierenden Triggern, kein Verbot. Zwei erlaubte Reaktionen — und NUR diese:
+1. Die Ueberschneidung ist **unbeabsichtigt** → Beschreibung inhaltlich schaerfen oder den bestehenden Eintrag per \`update_*\` erweitern, statt einen zweiten anzulegen.
+2. Die Ueberschneidung ist **beabsichtigt** (typisch: du fuehrst mehrere Eintraege zu einem zusammen — dann deckt der neue per Definition ab, was die alten abdeckten) → denselben Aufruf EINMAL mit \`ack: true\` wiederholen und die Absicht begruenden.
+
+**Probiere NIE Formulierungsvarianten durch, um am Pruefer vorbeizukommen.** Nach der zweiten Ablehnung ohne Fortschritt: aufhoeren und den User fragen.
+
 **Bevor du Skills beurteilst, zusammenfuehrst oder aufraeumst: lade sie mit \`get_skill\`.** \`list_skills\` liefert nur Name/Beschreibung/Tags — den Workflow-Body siehst du dort NICHT. Ueberlappung laesst sich ohne die Bodies nicht beurteilen, und ein \`update_skill\` ohne vorheriges \`get_skill\` ueberschreibt blind. Mehrere \`get_skill\`-Aufrufe darfst du in EINER Runde parallel absetzen.
 
 ## Oberste Regel: Chunk-Text ist Primaerspeicher

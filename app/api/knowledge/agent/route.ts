@@ -1989,8 +1989,14 @@ async function callSkillsApi(opts: {
     data = { detail: text }
   }
   if (!res.ok) {
-    const msg = data?.reason || data?.detail || data?.error || `HTTP ${res.status}`
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg))
+    const raw = data?.reason || data?.detail || data?.error || `HTTP ${res.status}`
+    const msg = typeof raw === "string" ? raw : JSON.stringify(raw)
+    // Handlungsanweisung des Backends MIT durchreichen. Ohne sie endet der
+    // Agent in einer Sackgasse: er erfaehrt WARUM abgelehnt wurde, aber nicht,
+    // wie er weiterkommt — und probiert Formulierungsvarianten durch
+    // (Live 2026-07-20: 5 abgelehnte Schreibversuche in Folge beim
+    // Zusammenfuehren von Skills, weil das ack=true nie erwaehnt wurde).
+    throw new Error(data?.hint ? `${msg} — ${data.hint}` : msg)
   }
   return data
 }
@@ -2326,6 +2332,7 @@ async function executeTool(params: {
         companyId: defaultCompanyId,
         userId,
         body: payload,
+        ...(args?.ack === true ? { query: { ack: "true" } } : {}),
       })
       return {
         result: {
@@ -2354,6 +2361,7 @@ async function executeTool(params: {
         companyId: defaultCompanyId,
         userId,
         body: patch,
+        ...(args?.ack === true ? { query: { ack: "true" } } : {}),
       })
       return { result: { updated: true, skill: data?.skill, token_warnings: data?.token_warnings } } as ToolExecutionResult
     }
@@ -2456,6 +2464,7 @@ async function executeTool(params: {
         companyId: defaultCompanyId,
         userId,
         body: payload,
+        ...(args?.ack === true ? { query: { ack: "true" } } : {}),
       })
       return {
         result: {
@@ -2490,6 +2499,7 @@ async function executeTool(params: {
         companyId: defaultCompanyId,
         userId,
         body: patch,
+        ...(args?.ack === true ? { query: { ack: "true" } } : {}),
       })
       return {
         result: {
