@@ -2,7 +2,7 @@
 
 import { apiFetch } from "@/lib/api-fetch"
 import { getSupabaseClient } from "@/lib/supabase-browser"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react"
 import { createPortal } from "react-dom"
 import { AlertCircle, ArrowDown, Check, ChevronDown, FileText, Globe, History, Image as ImageIcon, Link2, Loader2, MoreHorizontal, MoreVertical, Paperclip, Pencil, Plus, Search, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import ReactMarkdown from "react-markdown"
@@ -832,8 +832,24 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
     ])
   }, [isExpanded, messages.length, resolvedName])
 
+  // Neueste Nachrichten oben (renderedMessages = reverse) — "angepinnt"
+  // heisst scrollTop ~ 0. Auto-Scroll nur solange der User dort ist; scrollt
+  // er runter um waehrend eines laufenden Turns mitzulesen, darf er nicht
+  // mehr hochgezogen werden (sonst kaempft jeder Stream-Tick gegen den Scroll).
+  const isPinnedToLatestRef = useRef(true)
+  const handleChatScroll = useCallback(() => {
+    const el = chatScrollRef.current
+    if (!el) return
+    isPinnedToLatestRef.current = el.scrollTop < 48
+  }, [])
+  const handleChatWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
+    // Sofort entpinnen bei Scroll nach unten — sonst gewinnt der naechste
+    // Stream-Tick (messages/toolActivities) die Race gegen den Scroll-Event
+    // und setzt scrollTop wieder auf 0, bevor scrollTop >= 48 erreicht ist.
+    if (e.deltaY > 0) isPinnedToLatestRef.current = false
+  }, [])
   useEffect(() => {
-    if (!chatScrollRef.current) return
+    if (!chatScrollRef.current || !isPinnedToLatestRef.current) return
     chatScrollRef.current.scrollTop = 0
   }, [messages, isThinking, toolActivities])
 
@@ -1019,13 +1035,24 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
     if (!message) return
 
     const pendingId = `agent-${Date.now()}`
-    setToolActivities([
+    const seedToolMessageId = `assistant-tools-live-${Date.now()}`
+    const pendingActivity: ToolActivity = {
+      id: pendingId,
+      label: attachments && attachments.length > 0
+        ? `Agent analysiert die Anfrage (${attachments.length} Anhang${attachments.length > 1 ? "e" : ""})...`
+        : "Agent analysiert die Anfrage...",
+      status: "running"
+    }
+    setToolActivities([pendingActivity])
+    // Sofort Trace-Bubble anlegen — sonst fehlt nach Entfernen der alten
+    // "Agent arbeitet"-Leiste jegliches Feedback bis zum ersten SSE-Tool-Event.
+    setMessages(prev => [
+      ...prev,
       {
-        id: pendingId,
-        label: attachments && attachments.length > 0
-          ? `Agent analysiert die Anfrage (${attachments.length} Anhang${attachments.length > 1 ? "e" : ""})...`
-          : "Agent analysiert die Anfrage...",
-        status: "running"
+        id: seedToolMessageId,
+        role: "assistant",
+        content: "",
+        toolActivities: [pendingActivity]
       }
     ])
 
@@ -1061,9 +1088,9 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ""
-        let hasToolMessage = false
-        const liveToolMessageId = `assistant-tools-live-${Date.now()}`
-        const liveActivities = new Map<string, ToolActivity>()
+        let hasToolMessage = true
+        const liveToolMessageId = seedToolMessageId
+        const liveActivities = new Map<string, ToolActivity>([[pendingId, pendingActivity]])
         let streamingMessageId: string | null = null
         let streamedText = ""
 
@@ -1336,15 +1363,13 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
 
       if (normalizedActivities.length > 0) {
         setToolActivities(normalizedActivities)
-        setMessages(prev => [
-          ...prev,
-          {
-            id: `assistant-tools-${Date.now()}`,
-            role: "assistant",
-            content: "",
-            toolActivities: normalizedActivities
-          }
-        ])
+        setMessages(prev =>
+          prev.map(item =>
+            item.id === seedToolMessageId
+              ? { ...item, toolActivities: normalizedActivities }
+              : item
+          )
+        )
         const hasDone = normalizedActivities.some(a => a.status === "done")
         if (hasDone) playSuccess()
       } else {
@@ -1483,6 +1508,9 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
 
     const promptForAgent = compact(agentValue || displayValue)
     if (!promptForAgent) return
+
+    // Eigene Nachricht abschicken = wieder oben (neueste) anpinnen.
+    isPinnedToLatestRef.current = true
 
     // Upload pending attachments
     let uploadedAttachments: AgentAttachment[] = []
@@ -2122,33 +2150,12 @@ Sag einfach kurz dein Ziel, z. B. "Suche nach ...", "Importiere diese URL ..." o
                   </div>
                   <div className="flex min-h-0 flex-1">
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                  <div ref={chatScrollRef} className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-8 pb-5 pt-5 sm:px-12 md:px-20 lg:px-28">
-                    {isThinking && (
-                      <div className="mx-auto flex w-full max-w-[715px] justify-start agent-message-in">
-                        <div className="w-full rounded-xl border border-white/[0.06] bg-gradient-to-br from-white/[0.04] to-white/[0.01] p-3 sm:p-4 space-y-2.5 backdrop-blur-sm">
-                          <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <span className="agent-thinking-dot inline-block size-1.5 rounded-full bg-pink-400/60" />
-                              <span className="agent-thinking-dot inline-block size-1.5 rounded-full bg-pink-400/60" />
-                              <span className="agent-thinking-dot inline-block size-1.5 rounded-full bg-pink-400/60" />
-                            </div>
-                            <span className="agent-working-shimmer">Agent arbeitet...</span>
-                          </div>
-                          {toolActivities.length > 0 && (
-                            <div className="flex flex-wrap gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground/90">
-                              {toolActivities.map(activity => (
-                                <span key={activity.id} className={`inline-flex items-center gap-1 truncate max-w-[200px] ${activity.status === "running" ? "agent-tool-pulse" : ""}`}>
-                                  {activity.status === "running" && <span className="inline-block size-1 rounded-full bg-pink-400" />}
-                                  {activity.label}
-                                  {activity.status === "done" ? " ✓" : activity.status === "error" ? " ✗" : ""}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
+                  <div
+                    ref={chatScrollRef}
+                    onScroll={handleChatScroll}
+                    onWheel={handleChatWheel}
+                    className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-8 pb-5 pt-5 sm:px-12 md:px-20 lg:px-28"
+                  >
                     {renderedMessages.map((message, renderedIndex) => {
                       const originalIndex = messages.length - 1 - renderedIndex
                       const isEditingThisMessage = editingMessageId === message.id

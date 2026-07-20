@@ -1088,7 +1088,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
         properties: {
           name: {
             type: "string",
-            description: "Kebab-case, 2–40 Zeichen, z.B. 'grosshaendler-bestellung'."
+            description: "Kebab-case, 2–40 Zeichen MAX (hartes Limit). Zu lange Namen werden serverseitig an Segmentgrenzen gekuerzt — lieber selbst kurz waehlen, z.B. 'klassifizierung-beschwerden' statt 'klassifizierung-vorverarbeitung-beschwerden'. Bei Ablehnung NICHT denselben Namen erneut senden."
           },
           description: {
             type: "string",
@@ -1131,7 +1131,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
         additionalProperties: false,
         properties: {
           skill_id: { type: "string", description: "UUID der zu ändernden Skill." },
-          name: { type: "string", description: "Neuer Name (kebab-case), optional." },
+          name: { type: "string", description: "Neuer Name (kebab-case, 2–40 Zeichen MAX), optional. Zu lange Namen werden gekuerzt." },
           description: { type: "string", description: "Neue Trigger-Beschreibung, optional." },
           body: { type: "string", description: "Neuer Workflow-Body, optional." },
           tags: { type: "array", items: { type: "string" }, description: "Neue Tags, optional." },
@@ -1226,7 +1226,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
         properties: {
           name: {
             type: "string",
-            description: "Kebab-case, 2–40 Zeichen, z.B. 'widerruf-bestaetigung'."
+            description: "Kebab-case, 2–40 Zeichen MAX. Zu lange Namen werden gekuerzt — selbst kurz waehlen. Bei Ablehnung NICHT denselben Namen erneut senden. Beispiel: 'widerruf-bestaetigung'."
           },
           description: {
             type: "string",
@@ -1274,7 +1274,7 @@ export const KNOWLEDGE_AGENT_TOOLS = [
         additionalProperties: false,
         properties: {
           standard_answer_id: { type: "string", description: "UUID der zu ändernden Standardantwort." },
-          name: { type: "string", description: "Neuer Name (kebab-case), optional." },
+          name: { type: "string", description: "Neuer Name (kebab-case, 2–40 Zeichen MAX), optional. Zu lange Namen werden gekuerzt." },
           description: { type: "string", description: "Neue Trigger-Beschreibung, optional." },
           body: { type: "string", description: "Neuer Antworttext, optional." },
           answer_mode: {

@@ -4,6 +4,7 @@ import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
 import { streamScalewayKnowledgeAgent } from "@/lib/knowledge-agent/scaleway-stream"
+import { resolveSkillName } from "@/lib/knowledge-agent/skill-name"
 
 import { Database } from "@/supabase/types"
 import { env } from "@/lib/env"
@@ -2401,14 +2402,14 @@ async function executeTool(params: {
     }
     case "create_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skill kann nicht angelegt werden.")
-      const name = asString(args?.name, "name")
+      const resolvedName = resolveSkillName(asString(args?.name, "name"))
       const description = asString(args?.description, "description")
       const body = asString(args?.body, "body")
       const tags = Array.isArray(args?.tags) ? args.tags.filter((t: any) => typeof t === "string") : []
       // Skill gehört (organisatorisch) zu einer Datenbank: explizit angegeben
       // oder die aktuell aktive Datenbank. Ohne aktive DB → firmenweit (null).
       const kbId = asOptionalString(args?.knowledge_base_id) || activeKnowledgeBaseId || null
-      const payload: any = { name, description, body, tags }
+      const payload: any = { name: resolvedName.name_used, description, body, tags }
       if (kbId) payload.knowledge_base_id = kbId
       // KEINE Auto-Zuweisung an einen Agenten: Anlegen passiert hier (unter der
       // Datenbank), das Freischalten pro Mail-Agent passiert in der SupportAI.
@@ -2424,6 +2425,9 @@ async function executeTool(params: {
         result: {
           created: true,
           skill: data?.skill,
+          name_requested: resolvedName.name_requested,
+          name_used: resolvedName.name_used,
+          name_shortened: resolvedName.shortened,
           knowledge_base_id: kbId,
           scope: kbId ? "datenbank" : "firmenweit",
           next_step: "In der SupportAI-Konfiguration des Mail-Agenten freischalten (an/aus).",
@@ -2436,7 +2440,7 @@ async function executeTool(params: {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
       const skillId = asString(args?.skill_id, "skill_id")
       const patch: any = {}
-      if (asOptionalString(args?.name)) patch.name = args.name
+      if (asOptionalString(args?.name)) patch.name = resolveSkillName(String(args.name)).name_used
       if (asOptionalString(args?.description)) patch.description = args.description
       if (asOptionalString(args?.body)) patch.body = args.body
       if (Array.isArray(args?.tags)) patch.tags = args.tags.filter((t: any) => typeof t === "string")
@@ -2532,7 +2536,8 @@ async function executeTool(params: {
     }
     case "create_standard_answer": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Standardantwort kann nicht angelegt werden.")
-      const name = asString(args?.name, "name")
+      const resolvedName = resolveSkillName(asString(args?.name, "name"))
+      const name = resolvedName.name_used
       const description = asString(args?.description, "description")
       const body = asString(args?.body, "body")
       const tags = Array.isArray(args?.tags) ? args.tags.filter((t: any) => typeof t === "string") : []
@@ -2572,7 +2577,7 @@ async function executeTool(params: {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
       const answerId = asString(args?.standard_answer_id, "standard_answer_id")
       const patch: any = {}
-      if (asOptionalString(args?.name)) patch.name = args.name
+      if (asOptionalString(args?.name)) patch.name = resolveSkillName(String(args.name)).name_used
       if (asOptionalString(args?.description)) patch.description = args.description
       if (asOptionalString(args?.body)) patch.body = args.body
       if (Array.isArray(args?.tags)) patch.tags = args.tags.filter((t: any) => typeof t === "string")
