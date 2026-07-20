@@ -43,7 +43,7 @@ REGELN:
         }
       ],
       max_completion_tokens: 80,
-      temperature: 0.3,
+      // gpt-5.x: nur Default-Temperature (1) — andere Werte → 400
     })
 
     let suggestion = completion.choices[0]?.message?.content || ''
