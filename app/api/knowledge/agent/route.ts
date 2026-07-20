@@ -11,6 +11,7 @@ import { verifyCrossAgentHmac, timingSafeEqualStrings } from "@/lib/cross-agent-
 import { generateEmbeddings } from "@/lib/knowledge-base/embedding"
 import { KNOWLEDGE_AGENT_STATIC_PROMPT, buildKnowledgeAgentContextPrompt, buildKnowledgeAgentSystemPrompt } from "@/lib/knowledge-agent/system-prompt"
 import { KNOWLEDGE_AGENT_TOOLS, KnowledgeAgentToolName } from "@/lib/knowledge-agent/tool-schema"
+import { ToolArgumentError, validateToolArgs } from "@/lib/knowledge-agent/validate-tool-args"
 import { findOverlappingChunks } from "@/lib/knowledge-agent/chunk-overlap"
 import { runChunkFactRegeneration } from "@/lib/knowledge-agent/fact-regeneration"
 import { buildKbOverview } from "@/lib/knowledge-agent/kb-overview"
@@ -54,6 +55,8 @@ type AgentToolActivity = {
   label: string
   status: "running" | "done" | "error"
   error?: string
+  /** Redigierte/geclippte Aufruf-Argumente (siehe summarizeArgsForEvent). */
+  args?: Record<string, unknown>
   details?: {
     lines?: string[]
     links?: Array<{ title: string; url: string }>
@@ -2151,6 +2154,40 @@ function redactSecretsDeep(value: unknown, depth = 0): unknown {
   return value
 }
 
+/**
+ * Kompakte, sichere Argument-Fassung fuer Stream-Events und Journal.
+ *
+ * Die WDB sendete ihre tool_start/tool_error-Events bisher OHNE Argumente. Beim
+ * Live-Bug am 2026-07-20 (update_chunk_content ohne chunk_id) liess sich
+ * deshalb nur ueber das abgeschnittene Label rueckschliessen, was das Modell
+ * geschickt hatte — der eigentliche Aufruf war nirgends nachlesbar.
+ *
+ * Bewusst NICHT die Rohargumente: `content` traegt komplette Chunk-Texte
+ * (Journal-Bloat), und Argumente koennen Secrets enthalten. Daher redacted,
+ * pro Feld geclippt und in der Feldzahl begrenzt — genug fuer die Diagnose
+ * ("welche IDs kamen an, was fehlte"), ohne die Nutzlast zu spiegeln.
+ */
+function summarizeArgsForEvent(args: unknown): Record<string, unknown> | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return undefined
+  const redacted = redactSecretsDeep(args) as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  let fields = 0
+  for (const [key, value] of Object.entries(redacted)) {
+    if (fields >= 12) {
+      out._gekuerzt = true
+      break
+    }
+    if (value == null) continue
+    if (typeof value === "string") out[key] = value.length > 120 ? `${value.slice(0, 120)}…` : value
+    else if (typeof value === "number" || typeof value === "boolean") out[key] = value
+    else if (Array.isArray(value)) {
+      out[key] = value.length <= 5 ? value.map((v) => (typeof v === "string" ? v.slice(0, 60) : v)) : `[${value.length} Eintraege]`
+    } else out[key] = "{…}"
+    fields++
+  }
+  return out
+}
+
 async function executeTool(params: {
   toolName: string
   args: any
@@ -2173,6 +2210,18 @@ async function executeTool(params: {
     internalApiBaseUrl,
     attachments
   } = params
+
+  // ── Zentrale Argument-Validierung (vor JEDER Ausfuehrung) ──────────────
+  // GLM (Scaleway) macht kein constrained decoding und laesst Pflichtparameter
+  // gelegentlich weg — `required` im Tool-Schema ist damit nicht durchgesetzt.
+  // Frueher lief so ein Call in ein nacktes asString() ("Ungueltiger Parameter:
+  // chunk_id"), was das Modell nicht selbst beheben konnte. Hier bricht er
+  // stattdessen mit einer handlungsfaehigen Anweisung ab, die als tool-Message
+  // zurueckgeht (siehe ToolArgumentError.toPayload) — das Modell korrigiert sich
+  // in der naechsten Runde, statt den Auftrag zu verlieren.
+  // Laeuft VOR dem Tenant-Guard: kaputte Argumente sollen keine KB-Aufloesung
+  // und keine DB-Reads ausloesen.
+  validateToolArgs(toolName, args)
 
   // ── WP-D4: Zentraler Tenant-Scope-Guard ────────────────────────────────
   // resolveKnowledgeBaseId nimmt JEDE args.knowledge_base_id (Z.432). Im
@@ -4145,17 +4194,46 @@ async function executeTool(params: {
         throw new Error(`Text-Upload fehlgeschlagen: ${error?.message || "unbekannt"}`)
       }
 
+      // Die Zerlegung in Chunks laeuft ASYNCHRON in der Upload-Pipeline. Direkt
+      // nach dem Upload existiert daher noch kein Chunk, den man editieren
+      // koennte. Ohne diesen Hinweis versuchte das Modell genau das und rief
+      // update_chunk_content ohne chunk_id auf (Live-Fall 2026-07-20).
+      // Deshalb: verfuegbare Chunks best-effort mitgeben und, wenn noch keine da
+      // sind, explizit sagen, dass/warum nicht und was stattdessen zu tun ist.
+      let createdChunks: Array<{ id: string; content_position: number | null }> = []
+      try {
+        const { data: chunkRows } = await serviceClient
+          .from("document_chunks")
+          .select("id, content_position")
+          .eq("document_id", processed.documentId)
+          .order("content_position", { ascending: true })
+          .limit(20)
+        createdChunks = Array.isArray(chunkRows) ? chunkRows : []
+      } catch {
+        // Best effort — ein fehlgeschlagener Lesevorgang darf den erfolgreichen
+        // Upload nicht in einen Fehler verwandeln.
+        createdChunks = []
+      }
+
+      const chunkingComplete = createdChunks.length > 0
       return {
         result: {
           success: true,
-          queued: true,
+          queued: !chunkingComplete,
           provider: "text_upload_pipeline",
           knowledge_base_id: resolvedKbId,
           document: {
             id: processed.documentId,
             title: processed.finalTitle
           },
-          source_name: sourceName
+          source_name: sourceName,
+          chunking_complete: chunkingComplete,
+          chunks: createdChunks.map((c) => ({ chunk_id: c.id, position: c.content_position })),
+          hint: chunkingComplete
+            ? "Der Text ist gespeichert und zerlegt. Zum Nachschaerfen die oben gelisteten chunk_id verwenden."
+            : "Der Text ist gespeichert, die Zerlegung in Chunks laeuft noch asynchron. Es gibt daher JETZT noch keine chunk_id — " +
+              "rufe update_chunk_content nicht auf. Der Inhalt ist bereits vollstaendig abgelegt; ein weiterer Schritt ist nur noetig, " +
+              "wenn du spaeter gezielt einen Chunk aendern willst (dann via search_kb_text die chunk_id holen)."
         }
       } as ToolExecutionResult
     }
@@ -5192,7 +5270,10 @@ async function runAgentWorkflow(params: {
         id: toolCall.id,
         tool: toolName,
         label,
-        status: "running"
+        status: "running",
+        // Diagnose-Grundlage: ohne die Argumente war bei fehlerhaften Calls
+        // nicht rekonstruierbar, was das Modell tatsaechlich geschickt hat.
+        args: summarizeArgsForEvent(args)
       })
 
       try {
@@ -5319,6 +5400,8 @@ async function runAgentWorkflow(params: {
           label,
           status: "error",
           error: errorMessage,
+          // Argumente auch am Fehler-Event: genau hier braucht man sie spaeter.
+          args: summarizeArgsForEvent(args),
           details: {
             lines: [errorMessage]
           }
@@ -5332,7 +5415,13 @@ async function runAgentWorkflow(params: {
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: JSON.stringify({ error: errorMessage })
+          // Argument-Fehler gehen STRUKTURIERT zurueck (welcher Parameter, was
+          // ist kaputt, woher bekommt man ihn, retryable=true). Ein blosser
+          // Fehlertext laesst Modelle das Tool fuer defekt halten und auf einen
+          // falschen Weg ausweichen, statt den Aufruf zu reparieren.
+          content: JSON.stringify(
+            error instanceof ToolArgumentError ? error.toPayload() : { error: errorMessage }
+          )
         })
 
         await persistAgentMessage({
