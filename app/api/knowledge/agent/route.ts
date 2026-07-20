@@ -47,6 +47,9 @@ type AgentRequestBody = {
    *  Soft-Deadline minus Synthese-Reserve). Der Loop erzwingt VOR Ablauf eine
    *  Abschluss-Synthese, statt in den Plattform-Kill zu laufen. */
   budget?: { deadline_ms?: number }
+  /** Beratungs-Handshake: KEIN Agenten-Lauf, sondern eine einzelne, kurze
+   *  Modellantwort mit dem empfohlenen Vorgehen. Siehe runConsult(). */
+  mode?: "consult"
 }
 
 type AgentToolActivity = {
@@ -270,6 +273,89 @@ function getScalewayClient(): OpenAI {
     baseURL: env.SCALEWAY_BASE_URL,
   })
   return scalewayClient
+}
+
+// ── Beratungs-Handshake (2026-07-20) ────────────────────────────────────
+// Bisher schickte der Chef-Agent die FERTIGE Aufgabe und der WDB-Agent fuehrte
+// sie aus. Damit war der Fachmann fuer die Wissensdatenbank auf einen
+// Befehlsempfaenger reduziert: er konnte nicht widersprechen, auch wenn der
+// vorgegebene Weg fachlich der falsche war.
+//
+// Der Beratungsmodus ist bewusst KEIN Agenten-Lauf: ein einziger Modellaufruf,
+// keine Werkzeuge, keine Schreibrechte, knappes Ausgabebudget. Dadurch bleibt
+// er im Sekundenbereich und kann die eigentliche Arbeit nicht blockieren.
+const CONSULT_MAX_TOKENS = 400
+
+const CONSULT_SYSTEM_PROMPT = `Du bist der Fachmann fuer die Wissensdatenbank dieser Firma. Ein uebergeordneter Assistent ("Chef-Agent") tritt mit einem Anliegen an dich heran, BEVOR gearbeitet wird.
+
+Deine Aufgabe ist NICHT, die Aufgabe auszufuehren, und NICHT, sie brav zu bestaetigen. Du berätst: Du sagst, wie du als Fachmann vorgehen wuerdest — auch und gerade dann, wenn der vorgeschlagene Weg der falsche ist.
+
+Antworte KURZ und in genau dieser Struktur:
+**Verstanden:** Was das eigentliche Ziel ist (eine Zeile, in deinen Worten — nicht die Aufgabe nachplappern).
+**Vorgehen:** 2-5 nummerierte Schritte, wie DU es angehen wuerdest.
+**Achtung:** Nur wenn es wirklich etwas gibt — Risiken, ein besserer Weg, ein Denkfehler im Auftrag. Sonst diese Zeile ganz weglassen.
+**Fehlt mir:** Nur wenn ohne diese Angabe wirklich nicht sinnvoll gearbeitet werden kann.
+
+Fachliche Leitplanken, die du kennst und in deinem Vorgehen beruecksichtigst:
+- Faktisches Wissen gehoert in Chunks, mehrschrittige Ablaeufe in Skills, fertige Antworttexte in Standardantworten. Diese drei nie verwechseln.
+- Vor jeder inhaltlichen Beurteilung oder Aenderung den Bestand LADEN (get_skill / get_standard_answer / get_chunk_details) — Listen enthalten keine Volltexte.
+- Vor dem Anlegen immer erst auflisten und auf Ueberschneidung pruefen; Bestehendes erweitern schlaegt Neuanlegen.
+- Grosse Auftraege in Etappen schneiden, damit sie ins Zeitbudget passen.
+
+Maximal 180 Woerter. Keine Einleitung, keine Hoeflichkeitsfloskeln, kein Nachfragen um des Nachfragens willen.`
+
+/** Kompakter Bestand als Erdung — sonst berät das Modell ins Blaue. */
+async function loadConsultContext(
+  serviceClient: any,
+  companyId: string | null,
+): Promise<string> {
+  if (!companyId) return "(kein Firmenkontext)"
+  try {
+    const [kbs, skills] = await Promise.all([
+      serviceClient
+        .from("knowledge_bases")
+        .select("name")
+        .eq("company_id", companyId)
+        .limit(25),
+      serviceClient
+        .from("agent_skills")
+        .select("kind")
+        .eq("company_id", companyId)
+        .limit(200),
+    ])
+    const kbNames: string[] = (kbs?.data || []).map((k: any) => k?.name).filter(Boolean)
+    const rows: any[] = skills?.data || []
+    const skillCount = rows.filter((r) => r?.kind === "skill").length
+    const answerCount = rows.filter((r) => r?.kind === "standard_answer").length
+    return [
+      `Wissensdatenbanken (${kbNames.length}): ${kbNames.join(", ") || "keine"}`,
+      `Skills: ${skillCount} · Standardantworten: ${answerCount}`,
+    ].join("\n")
+  } catch {
+    // Erdung ist ein Bonus, kein Muss — ohne sie beraet er eben allgemeiner.
+    return "(Bestand konnte nicht geladen werden)"
+  }
+}
+
+async function runConsult(params: {
+  message: string
+  companyId: string | null
+  serviceClient: any
+}): Promise<string> {
+  const { message, companyId, serviceClient } = params
+  const bestand = await loadConsultContext(serviceClient, companyId)
+  const response = await getScalewayClient().chat.completions.create({
+    model: AGENT_MODEL,
+    max_tokens: CONSULT_MAX_TOKENS,
+    messages: [
+      { role: "system", content: CONSULT_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: `## Bestand\n${bestand}\n\n## Anliegen des Chef-Agenten\n${message}`,
+      },
+    ],
+  })
+  return (response.choices?.[0]?.message?.content || "").trim()
 }
 
 const KNOWLEDGE_API_URL = env.KNOWLEDGE_API_URL
@@ -5723,6 +5809,32 @@ export async function POST(request: NextRequest) {
     }
 
     const internalApiBaseUrl = request.nextUrl.origin
+
+    // ── Beratungs-Handshake ─────────────────────────────────────────
+    // Bewusst VOR der Dedup: der Beratungsmodus startet keinen Lauf, schreibt
+    // nichts und ist wiederholbar — eine Dedup-Zeile waere hier nur Ballast
+    // (und wuerde die requestId des echten Laufs verbrennen).
+    if (body.mode === "consult") {
+      if (!isCrossAgentRequest) {
+        return NextResponse.json(
+          { error: "Beratungsmodus ist nur fuer Cross-Agent-Aufrufe." },
+          { status: 403 }
+        )
+      }
+      try {
+        const proposal = await runConsult({
+          message,
+          companyId: crossAgentCompanyId,
+          serviceClient,
+        })
+        return NextResponse.json({ mode: "consult", proposal })
+      } catch (error) {
+        // Die Beratung darf die eigentliche Arbeit NIE blockieren: der
+        // Aufrufer faellt bei leerem proposal auf den Direktauftrag zurueck.
+        console.error("[knowledge-agent] Beratung fehlgeschlagen:", error)
+        return NextResponse.json({ mode: "consult", proposal: "" })
+      }
+    }
 
     // ── Request-Dedup (WP-D2): Insert-or-Return ─────────────────────
     // Agent-Runs sind nicht idempotent. Erst diese Dedup macht den
