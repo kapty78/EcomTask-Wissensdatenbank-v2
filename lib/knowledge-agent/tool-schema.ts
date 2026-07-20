@@ -1063,6 +1063,22 @@ export const KNOWLEDGE_AGENT_TOOLS = [
   {
     type: "function",
     function: {
+      name: "get_skill",
+      description:
+        "Laedt eine einzelne Skill VOLLSTAENDIG (inkl. Workflow-Body und Zuweisungen). list_skills liefert nur Name/Beschreibung/Tags — NICHT den Body. Nutze get_skill IMMER, bevor du eine Skill inhaltlich beurteilst (Ueberlappung, Zusammenfuehrung, Aufraeumen) oder per update_skill aenderst, sonst ueberschreibst du blind. Fuer Standardantworten ist es get_standard_answer — das sind verschiedene Entitaeten, IDs sind NICHT austauschbar.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          skill_id: { type: "string", description: "UUID der Skill." }
+        },
+        required: ["skill_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "create_skill",
       description:
         "Legt eine NEUE Skill UNTER der aktuell aktiven Datenbank an (wie ein Wissenseintrag — die Skill gehört zu dieser Datenbank). NUR für mehrschrittige, situativ greifende Workflows (z.B. 'Sammelbestellungen eines Großhändlers', 'Reklamations-Ablauf'). Für faktisches Wissen → stattdessen create_chunk/add_fact_to_chunk. Für immer geltende Kurzregeln → Sonderfallprompt (kein Skill). Rufe IMMER zuerst list_skills auf, prüfe auf Duplikate/Überlappung und ob ein bestehender Skill via update_skill erweitert werden sollte. Die Skill wird NICHT automatisch einem Agenten zugewiesen — das Freischalten pro Mail-Agent passiert in der SupportAI-Konfiguration.",
@@ -1131,6 +1147,23 @@ export const KNOWLEDGE_AGENT_TOOLS = [
         additionalProperties: false,
         properties: {
           skill_id: { type: "string", description: "UUID der Skill." }
+        },
+        required: ["skill_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_skill",
+      description:
+        "Loescht eine Skill dauerhaft. NUR nach ausdruecklicher Bestaetigung des Users. Beim Zusammenfuehren zweier Skills: ERST die Zielskill per update_skill vollstaendig schreiben und das Ergebnis pruefen, DANN die Quellskill loeschen. Mit 'force': true auch loeschen, wenn sie noch einem Mail-Agenten zugewiesen ist.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          skill_id: { type: "string", description: "UUID der Skill." },
+          force: { type: "boolean", description: "true = auch loeschen, wenn noch zugewiesen. Default false." }
         },
         required: ["skill_id"]
       }

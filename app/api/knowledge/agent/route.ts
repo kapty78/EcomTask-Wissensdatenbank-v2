@@ -2041,7 +2041,7 @@ const PARALLEL_SAFE_TOOLS = new Set<string>([
   "debug_knowledge_search", "search_kb_text", "search_chunks_by_text",
   "search_facts_by_text", "get_chunk_details", "get_knowledge_overview",
   "get_chunk_combine_suggestions", "list_skills", "verify_fact_findability",
-  "list_standard_answers", "get_standard_answer",
+  "list_standard_answers", "get_standard_answer", "get_skill",
   "generate_question_prompt", "web_search", "analyze_attachment",
   "present_code_block", "present_table", "present_image", "present_interactive_choices",
 ])
@@ -2069,8 +2069,13 @@ const HISTORY_BUDGET_BY_TOOL: Record<string, number> = {
   list_skills: 24_000,
   list_standard_answers: 24_000,
 }
-/** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust. */
-const FULL_RESULT_TOOLS = new Set(["get_chunk_details"])
+/** Read-Modify-Write-Quellen: Vollergebnis noetig, sonst Datenverlust.
+ *  get_skill/get_standard_answer gehoeren dazu (2026-07-20): ihr Body darf bis
+ *  ~2000 Token gross sein und sprengt damit das 2KB-Default-Budget — clipValue
+ *  haette ihn auf 400 Zeichen gekuerzt, und ein darauf aufbauendes
+ *  update_skill/update_standard_answer haette den Rest still weggeschrieben.
+ *  Exakt dieselbe Klasse wie der Chunk-Fall, nur unbemerkt. */
+const FULL_RESULT_TOOLS = new Set(["get_chunk_details", "get_skill", "get_standard_answer"])
 /** Absolute Sicherheitsgrenze auch fuer Detail-Tools (~16k Tokens). */
 const FULL_RESULT_MAX_BYTES = 64_000
 const CLIP_ARRAY_CAP = 8
@@ -2111,7 +2116,7 @@ function clipToolResultForHistory(toolName: string, result: unknown): string {
     return JSON.stringify({
       _unvollstaendig: true,
       hinweis:
-        "Chunk-Ergebnis > 64KB — Volltext hier NICHT vollstaendig. KEIN update_chunk_content auf Basis dieses Ergebnisses durchfuehren; Chunk zuerst in kleinere Chunks aufteilen.",
+        `Ergebnis von ${toolName} > 64KB — Volltext hier NICHT vollstaendig. KEIN update_* auf Basis dieses Ergebnisses durchfuehren; Inhalt zuerst in kleinere Einheiten aufteilen.`,
       auszug: json.slice(0, 8_000),
     })
   }
@@ -2287,6 +2292,21 @@ async function executeTool(params: {
         },
       } as ToolExecutionResult
     }
+    case "get_skill": {
+      // Gegenstueck zu get_standard_answer. Fehlte bis 2026-07-20 komplett:
+      // list_skills liefert nur die Zusammenfassung (kein Body), also konnte
+      // der Agent eine Skill gar nicht LESEN. Live-Folge: er wich auf
+      // get_standard_answer mit Skill-IDs aus ("Standard answer not found.")
+      // und fragte am Ende den User statt zu arbeiten.
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const skillId = asString(args?.skill_id, "skill_id")
+      const data = await callSkillsApi({
+        method: "GET",
+        path: `/api/skills/${skillId}`,
+        companyId: defaultCompanyId,
+      })
+      return { result: { skill: data } } as ToolExecutionResult
+    }
     case "create_skill": {
       if (!defaultCompanyId) throw new Error("Keine Firma im Kontext — Skill kann nicht angelegt werden.")
       const name = asString(args?.name, "name")
@@ -2350,6 +2370,18 @@ async function executeTool(params: {
         body: { agent_config_id: mailConfigId, enabled: true },
       })
       return { result: { assigned: true, assignment: data } } as ToolExecutionResult
+    }
+    case "delete_skill": {
+      if (!defaultCompanyId) throw new Error("Keine Firma im Kontext.")
+      const skillId = asString(args?.skill_id, "skill_id")
+      const force = args?.force === true
+      await callSkillsApi({
+        method: "DELETE",
+        path: `/api/skills/${skillId}`,
+        companyId: defaultCompanyId,
+        ...(force ? { query: { force: "true" } } : {}),
+      })
+      return { result: { deleted: { type: "skill", id: skillId } } } as ToolExecutionResult
     }
     // ── Standardantworten (Antwort-Vorlagen) — proxy auf denselben Skill-Service
     //    (kind='standard_answer' in agent_skills), gleiche Auth wie Skills. ──
