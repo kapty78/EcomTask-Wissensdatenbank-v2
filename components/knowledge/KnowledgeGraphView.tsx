@@ -1,6 +1,8 @@
 "use client"
 
 import { apiFetch } from "@/lib/api-fetch"
+import GraphProbePanel from "@/components/knowledge/GraphProbePanel"
+import GraphStatusBar from "@/components/knowledge/GraphStatusBar"
 import { useEffect, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { Loader2, ZoomIn, ZoomOut, Maximize2, X, RotateCcw, Search } from "lucide-react"
@@ -289,6 +291,9 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   const hoveredRef = useRef<GraphNode | null>(null)
   const searchRef = useRef("")
   const [searchQuery, setSearchQuery] = useState("")
+  const [showProbe, setShowProbe] = useState(false)
+  // Zaehler, der nach einem Neuaufbau den Graph-Fetch erneut ausloest.
+  const [reloadToken, setReloadToken] = useState(0)
   const [colorMode, setColorMode] = useState<ColorMode>("community")
   const colorModeRef = useRef<ColorMode>("community")
   useEffect(() => { colorModeRef.current = colorMode }, [colorMode])
@@ -343,6 +348,34 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
   }, [setSelectedNodeUI])
 
   // Update search filter ref when query changes
+  /**
+   * Hebt eine Liste von Entitäten hervor — genutzt vom Graph-Tester, um zu
+   * zeigen, welche Knoten eine Frage getroffen hat.
+   *
+   * Nutzt bewusst denselben `matchedIdsRef`-Filter wie die Entity-Suche
+   * statt einer zweiten Highlight-Mechanik: der Renderer versteht diesen
+   * Filter bereits, und zwei konkurrierende Hervorhebungen würden sich
+   * gegenseitig überschreiben.
+   */
+  const highlightByNames = useCallback((names: string[] | null) => {
+    if (!names || names.length === 0) {
+      matchedIdsRef.current = null
+      return
+    }
+    const wanted = new Set(names.map((n) => n.toLowerCase()))
+    const direct = new Set<string>()
+    for (const n of nodesRef.current) {
+      if (wanted.has(n.label.toLowerCase())) direct.add(n.id)
+    }
+    // Nachbarn mit aufnehmen, damit die Kanten zwischen den Treffern
+    // sichtbar bleiben — sonst schweben die Knoten beziehungslos im Raum.
+    const withNeighbors = new Set(direct)
+    for (const id of direct) {
+      for (const nb of edgeIndexRef.current.get(id) || []) withNeighbors.add(nb)
+    }
+    matchedIdsRef.current = withNeighbors
+  }, [])
+
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value)
     searchRef.current = value
@@ -407,7 +440,7 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
     }
     load()
     return () => { cancelled = true }
-  }, [knowledgeBaseId])
+  }, [knowledgeBaseId, reloadToken])
 
   // Find node at screen position
   const findNodeAt = useCallback((mx: number, my: number): GraphNode | null => {
@@ -982,7 +1015,33 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
               </div>
               <div className="w-px h-3 bg-white/[0.06]" />
               <span className="text-[11px] text-white/40">{graphData.stats.relations} Relations</span>
+              <div className="w-px h-3 bg-white/[0.06]" />
+              <button
+                onClick={() => setShowProbe((v) => !v)}
+                className={`text-[11px] transition-colors ${
+                  showProbe ? "text-primary" : "text-white/40 hover:text-white/70"
+                }`}
+                title="Eine Frage gegen den Graphen stellen und sehen, welche Verbindungen greifen"
+              >
+                Testen
+              </button>
             </div>
+
+            {/* Aktualität des Graphen + Neuaufbau */}
+            <div className="w-[280px]">
+              <GraphStatusBar
+                knowledgeBaseId={knowledgeBaseId}
+                onRebuildStarted={() => setReloadToken((t) => t + 1)}
+              />
+            </div>
+
+            {showProbe && (
+              <GraphProbePanel
+                knowledgeBaseId={knowledgeBaseId}
+                onClose={() => setShowProbe(false)}
+                onHighlight={highlightByNames}
+              />
+            )}
           </div>
         )}
 
