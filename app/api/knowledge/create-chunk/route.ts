@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { getRouteAuth } from '@/lib/route-auth'
+import { enqueueGraphJobForDocument } from '@/lib/knowledge-base/graph-enqueue'
 
 export async function POST(request: NextRequest) {
   try {
@@ -80,7 +81,11 @@ export async function POST(request: NextRequest) {
       console.log('ℹ️ Faktenextraktion für neuen Chunk kann über separaten Endpoint erfolgen')
     }
 
-    return NextResponse.json({ 
+    // Knowledge Graph nachziehen: neuer Inhalt = neue Entitaeten/Kanten.
+    // Ohne das bleibt der Graph auf dem Stand vor der Bearbeitung stehen.
+    await enqueueGraphJobForDocument(documentId, 'chunk_edit')
+
+    return NextResponse.json({
       success: true, 
       chunk: createdChunk,
       message: 'Chunk erfolgreich erstellt'

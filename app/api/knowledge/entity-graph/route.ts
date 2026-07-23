@@ -4,6 +4,43 @@ import { authorizeKbRequest } from "@/lib/kb-access"
 
 export const dynamic = "force-dynamic"
 
+/** PostgREST-Seitengröße (Supabase-Default db-max-rows). */
+const PAGE_SIZE = 1000
+/** Wie viele UUIDs pro .in()-Filter, damit die URL nicht zu lang wird. */
+const ID_BATCH = 200
+
+/**
+ * Liest eine PostgREST-Abfrage vollständig, seitenweise.
+ *
+ * PostgREST kappt still bei db-max-rows. Wer das nicht weiß, liest eine
+ * Teilmenge und hält sie für das Ganze — hier hat das dazu geführt, dass
+ * das UI 1000 statt 2904 Kanten gezeigt hat.
+ *
+ * `build` muss bei jedem Aufruf eine FRISCHE Query liefern; die Supabase-
+ * Builder sind zustandsbehaftet und ein zweites .range() auf demselben
+ * Objekt verhält sich nicht zuverlässig. Eine stabile Sortierung ist
+ * Pflicht, sonst darf Postgres die Reihenfolge zwischen zwei Seiten ändern
+ * und es fehlen Zeilen oder tauchen doppelt auf.
+ */
+async function fetchAllRows<T>(build: () => any): Promise<T[]> {
+  const out: T[] = []
+  let offset = 0
+
+  for (;;) {
+    const { data, error } = await build().range(offset, offset + PAGE_SIZE - 1)
+    if (error) {
+      console.error("[entity-graph] Seite ab", offset, "fehlgeschlagen:", error.message)
+      break
+    }
+    const rows = (data ?? []) as T[]
+    out.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
+  }
+
+  return out
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -26,46 +63,73 @@ export async function GET(request: NextRequest) {
     )
 
     // Load entities (include community_id for topic-based coloring)
-    const { data: entities, error: entitiesError } = await supabase
-      .from("knowledge_entities")
-      .select("id, name, entity_type, description, mention_count, community_id")
-      .eq("knowledge_base_id", knowledgeBaseId)
-      .order("mention_count", { ascending: false })
+    //
+    // fetchAllRows statt einer einzelnen Abfrage: PostgREST liefert höchstens
+    // db-max-rows (Supabase-Default 1000) und schneidet den Rest OHNE Fehler
+    // ab. Die USD-KB hat 2904 Relationen — im UI standen deshalb "1000
+    // Relations", also ein Drittel des echten Graphen, und niemand konnte es
+    // sehen. Für jede Menge, die mit den Daten wächst, ist Paginierung Pflicht.
+    const entities = await fetchAllRows<{
+      id: string
+      name: string
+      entity_type: string
+      description: string | null
+      mention_count: number | null
+      community_id: number | null
+      origin: string | null
+    }>(() =>
+      supabase
+        .from("knowledge_entities")
+        .select("id, name, entity_type, description, mention_count, community_id, origin")
+        .eq("knowledge_base_id", knowledgeBaseId)
+        .order("id")
+    )
 
-    if (entitiesError) {
-      return NextResponse.json(
-        { error: "Fehler beim Laden der Entities", details: entitiesError.message },
-        { status: 500 }
-      )
-    }
-
-    if (!entities || entities.length === 0) {
+    if (entities.length === 0) {
       return NextResponse.json({ nodes: [], edges: [], stats: { entities: 0, relations: 0 } })
     }
 
     // Load relations
-    const { data: relations, error: relationsError } = await supabase
-      .from("knowledge_relations")
-      .select("id, source_entity_id, target_entity_id, relation_type, description, weight")
-      .eq("knowledge_base_id", knowledgeBaseId)
+    const relations = await fetchAllRows<{
+      id: string
+      source_entity_id: string
+      target_entity_id: string
+      relation_type: string
+      description: string | null
+      weight: number | null
+      confidence_tag: string | null
+      origin: string | null
+    }>(() =>
+      supabase
+        .from("knowledge_relations")
+        .select(
+          "id, source_entity_id, target_entity_id, relation_type, description, weight, confidence_tag, origin"
+        )
+        .eq("knowledge_base_id", knowledgeBaseId)
+        .order("id")
+    )
 
-    if (relationsError) {
-      return NextResponse.json(
-        { error: "Fehler beim Laden der Relations", details: relationsError.message },
-        { status: 500 }
+    // Load entity-chunk mappings (first chunk per entity for "zum Chunk" navigation).
+    // Die Junction-Tabelle hat keine knowledge_base_id — gefiltert wird also
+    // über die Entity-IDs. Die müssen in Blöcke zerlegt werden: ein .in() mit
+    // 800 UUIDs sprengt die URL-Länge von PostgREST.
+    const entityIds = entities.map((e) => e.id)
+    const entityChunks: Array<{ entity_id: string; chunk_id: string }> = []
+    for (let i = 0; i < entityIds.length; i += ID_BATCH) {
+      const batch = entityIds.slice(i, i + ID_BATCH)
+      const rows = await fetchAllRows<{ entity_id: string; chunk_id: string }>(() =>
+        supabase
+          .from("knowledge_entity_chunks")
+          .select("entity_id, chunk_id")
+          .in("entity_id", batch)
+          .order("entity_id")
       )
+      entityChunks.push(...rows)
     }
-
-    // Load entity-chunk mappings (first chunk per entity for "zum Chunk" navigation)
-    const entityIds = new Set(entities.map((e) => e.id))
-    const { data: entityChunks } = await supabase
-      .from("knowledge_entity_chunks")
-      .select("entity_id, chunk_id")
-      .in("entity_id", [...entityIds])
 
     // Build entity → first chunk_id lookup
     const entityChunkMap = new Map<string, string>()
-    for (const ec of entityChunks || []) {
+    for (const ec of entityChunks) {
       if (!entityChunkMap.has(ec.entity_id)) {
         entityChunkMap.set(ec.entity_id, ec.chunk_id)
       }
@@ -113,20 +177,31 @@ export async function GET(request: NextRequest) {
       color: communityColor(c.community_id),
     }))
 
-    // Map to graph format
-    const nodes = entities.map((e) => ({
-      id: e.id,
-      label: e.name,
-      type: e.entity_type,
-      description: e.description || "",
-      weight: e.mention_count || 1,
-      chunkId: entityChunkMap.get(e.id) || null,
-      communityId: e.community_id ?? null,
-      communityColor: e.community_id != null ? communityColor(e.community_id) : null,
-    }))
+    // Map to graph format. Sortierung nach mention_count wie bisher — das
+    // Rendering nutzt sie für die Knotengröße und Zeichenreihenfolge.
+    // Gelesen wird trotzdem nach id sortiert, weil Paginierung eine stabile,
+    // eindeutige Sortierung braucht (mention_count ist beides nicht).
+    const nodes = entities
+      .slice()
+      .sort((a, b) => (b.mention_count || 0) - (a.mention_count || 0))
+      .map((e) => ({
+        id: e.id,
+        label: e.name,
+        type: e.entity_type,
+        description: e.description || "",
+        weight: e.mention_count || 1,
+        chunkId: entityChunkMap.get(e.id) || null,
+        communityId: e.community_id ?? null,
+        communityColor: e.community_id != null ? communityColor(e.community_id) : null,
+        // 'manual' = vom Nutzer gepflegt, überlebt jeden Neuaufbau.
+        origin: e.origin ?? "extracted",
+      }))
 
-    const edges = (relations || [])
-      .filter((r) => entityIds.has(r.source_entity_id) && entityIds.has(r.target_entity_id))
+    const entityIdSet = new Set(entityIds)
+    const edges = relations
+      .filter(
+        (r) => entityIdSet.has(r.source_entity_id) && entityIdSet.has(r.target_entity_id)
+      )
       .map((r) => ({
         id: r.id,
         source: r.source_entity_id,
@@ -134,6 +209,10 @@ export async function GET(request: NextRequest) {
         type: r.relation_type,
         label: r.description || r.relation_type,
         weight: r.weight || 1,
+        // extracted = direkt aus dem Text, inferred = über Chunks geraten,
+        // ambiguous = über Dokumente hinweg geraten.
+        confidence: r.confidence_tag ?? null,
+        origin: r.origin ?? "extracted",
       }))
 
     return NextResponse.json({
@@ -144,6 +223,8 @@ export async function GET(request: NextRequest) {
         entities: nodes.length,
         relations: edges.length,
         communities: communities.length,
+        manualEntities: nodes.filter((n) => n.origin === "manual").length,
+        manualRelations: edges.filter((e) => e.origin === "manual").length,
       },
     })
   } catch (error: any) {

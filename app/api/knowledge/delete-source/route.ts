@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getRouteAuth } from "@/lib/route-auth"
+import { enqueueGraphJob } from "@/lib/knowledge-base/graph-enqueue"
 
 type DeleteSourceRequest = {
   knowledgeBaseId: string
@@ -109,9 +110,14 @@ export async function DELETE(request: Request) {
 
     const { data: matchingRows, error: matchingRowsError } = await supabase
       .from("knowledge_items")
-      .select("id, document_id")
+      .select("id, document_id, company_id")
       .eq("knowledge_base_id", knowledgeBaseId)
       .eq("source_name", sourceName)
+
+    // company_id VOR dem Löschen sichern — danach gibt es keine Zeile mehr,
+    // aus der sie sich ableiten ließe, und der Graph-Aufräumlauf braucht sie.
+    const companyIdForGraph: string | null =
+      (matchingRows || []).find((r: any) => r?.company_id)?.company_id ?? null
 
     if (matchingRowsError) {
       return NextResponse.json(
@@ -224,6 +230,22 @@ export async function DELETE(request: Request) {
       }
 
       deletedDocumentIds.push(documentId)
+    }
+
+    // Knowledge Graph aufräumen.
+    //
+    // Löschen ging bisher spurlos am Graphen vorbei: die Entitäten und
+    // Beziehungen einer entfernten Quelle blieben stehen und wirkten weiter
+    // in die Antworten hinein. Hier gibt es kein Dokument mehr, das man neu
+    // extrahieren könnte — deshalb ein Auftrag OHNE documentId/sourceName:
+    // der Worker liest das als reinen Aufräum-Lauf und entfernt alles, was
+    // ohne Anker zurückgeblieben ist. Manuell gepflegte Verknüpfungen
+    // bleiben dabei erhalten.
+    if (companyIdForGraph) {
+      await enqueueGraphJob(
+        { companyId: companyIdForGraph, knowledgeBaseId },
+        'delete'
+      )
     }
 
     return NextResponse.json({

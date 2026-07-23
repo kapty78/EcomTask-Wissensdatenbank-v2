@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { getRouteAuth } from '@/lib/route-auth'
+import { enqueueGraphJob, resolveGraphTarget } from '@/lib/knowledge-base/graph-enqueue'
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -26,6 +27,17 @@ export async function DELETE(request: NextRequest) {
     )
 
     console.log('🗑️ Chunk-Löschung gestartet für:', chunkId)
+
+    // Graph-Ziel VOR dem Löschen auflösen: danach sind die knowledge_items
+    // dieses Chunks weg und die KB liesse sich nicht mehr daraus ableiten.
+    const { data: chunkRow } = await supabase
+      .from('document_chunks')
+      .select('document_id')
+      .eq('id', chunkId)
+      .maybeSingle()
+    const graphTarget = chunkRow?.document_id
+      ? await resolveGraphTarget(chunkRow.document_id)
+      : null
 
     // Zuerst alle zugehörigen Knowledge Items (Fakten) löschen
     const { error: factsDeleteError } = await supabase
@@ -57,7 +69,15 @@ export async function DELETE(request: NextRequest) {
 
     console.log('✅ Chunk und zugehörige Fakten erfolgreich gelöscht:', chunkId)
 
-    return NextResponse.json({ 
+    // Graph nachziehen: der Extraktor laeuft ueber die verbliebenen Chunks
+    // und der Prune-Schritt raeumt Entitaeten weg, deren einziger Anker
+    // gerade verschwunden ist. Ohne das bleiben die Kanten des geloeschten
+    // Inhalts fuer immer im Graphen stehen.
+    if (graphTarget) {
+      await enqueueGraphJob(graphTarget, 'delete')
+    }
+
+    return NextResponse.json({
       success: true, 
       message: 'Chunk und alle zugehörigen Fakten erfolgreich gelöscht'
     })

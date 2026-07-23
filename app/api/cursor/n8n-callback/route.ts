@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 import { env } from '@/lib/env'
+import { enqueueGraphJobForDocument } from '@/lib/knowledge-base/graph-enqueue'
 
 export async function POST(req: NextRequest) {
   try {
@@ -290,49 +291,29 @@ async function processCallback(body: any) {
 
   console.log(`[server-callback] Updated document ${documentId} status to ${targetStatus} (${targetProgress}%)`)
 
-  // ✅ Knowledge Graph Extraction: Trigger nach erfolgreicher Fakten-Extraktion
-  if (targetStatus === 'completed' && documentId) {
-    try {
-      // Lade company_id und knowledge_base_id für dieses Dokument
-      const { data: doc } = await supabaseAdmin
-        .from('documents')
-        .select('company_id')
-        .eq('id', documentId)
-        .single()
-
-      // knowledge_base_id aus den knowledge_items dieses Dokuments ermitteln
-      const { data: kbItem } = await supabaseAdmin
-        .from('knowledge_items')
-        .select('knowledge_base_id')
-        .eq('document_id', documentId)
-        .limit(1)
-        .maybeSingle()
-
-      const companyId = doc?.company_id
-      const kbId = kbItem?.knowledge_base_id
-
-      if (companyId && kbId) {
-        fetch(`${env.SUPPORT_BACKEND_URL}/api/v1/knowledge/graph-extract`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': env.SUPPORT_BACKEND_API_KEY,
-          },
-          body: JSON.stringify({
-            knowledge_base_id: kbId,
-            company_id: companyId,
-            document_id: documentId,
-          }),
-        }).catch((err) =>
-          console.error('[Graph] Fire-and-forget graph extraction failed:', err)
-        )
-        console.log(`[server-callback] Graph extraction triggered for document ${documentId}`)
-      } else {
-        console.log(`[server-callback] Skipping graph extraction: missing company_id (${companyId}) or kb_id (${kbId})`)
-      }
-    } catch (err) {
-      console.error('[server-callback] Error triggering graph extraction:', err)
-    }
+  // ✅ Knowledge Graph: Extraktion nach erfolgreicher Fakten-Extraktion einreihen.
+  //
+  // Frueher stand hier ein fire-and-forget fetch() auf das Support-Backend,
+  // das die Arbeit dort in FastAPI-BackgroundTasks haengte: kein Retry, kein
+  // Journal. War das Backend gerade im Deploy oder starb der Prozess mitten
+  // in der Extraktion, war der Auftrag weg — ohne Spur ausser einer Zeile in
+  // console.error. In der Live-DB waren dadurch 16 von 37 USD-Dokumenten
+  // dauerhaft ohne Graphen.
+  //
+  // Jetzt geht der Auftrag in die persistente Outbox. Er ueberlebt ein
+  // nicht erreichbares Backend, wird bei Fehlern wiederholt und ist in der
+  // UI sichtbar.
+  //
+  // Auch bei regenerierten Fakten einreihen: dort übernimmt targetStatus den
+  // bestehenden Dokumentstatus, der nicht zwingend 'completed' ist — die
+  // Fakten haben sich aber sehr wohl geändert und der Graph muss nachziehen.
+  const factsChanged =
+    event === 'facts_regenerated' || event === 'facts_regeneration_completed'
+  if (documentId && (targetStatus === 'completed' || factsChanged)) {
+    await enqueueGraphJobForDocument(
+      documentId,
+      factsChanged ? 'chunk_edit' : 'upload'
+    )
   }
 
   // ✅ NEU: Spezielle Behandlung für Fakten-Regenerierung
