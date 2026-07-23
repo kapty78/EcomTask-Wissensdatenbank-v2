@@ -1,6 +1,7 @@
 "use client"
 
 import { apiFetch } from "@/lib/api-fetch"
+import GraphNodeEditor from "@/components/knowledge/GraphNodeEditor"
 import GraphProbePanel from "@/components/knowledge/GraphProbePanel"
 import GraphStatusBar from "@/components/knowledge/GraphStatusBar"
 import { useEffect, useRef, useState, useCallback } from "react"
@@ -1196,6 +1197,17 @@ export default function KnowledgeGraphView({ knowledgeBaseId, onClose, onNodeSel
                     </div>
                   </div>
                 )}
+
+                {/* Eigene Verknuepfungen pflegen — alles hier Angelegte
+                    traegt origin='manual' und ueberlebt jeden Neuaufbau. */}
+                <GraphNodeEditor
+                  node={selectedNodeUI}
+                  allNodes={graphData?.nodes ?? []}
+                  onChanged={() => {
+                    setSelectedNodeUI(null)
+                    setReloadToken((t) => t + 1)
+                  }}
+                />
               </div>
             </div>
           </motion.div>
